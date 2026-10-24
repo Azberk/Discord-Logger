@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="tr" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord Stalker & Presence Radar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0b0d13;
+            color: #e2e8f0;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass {
+            background: rgba(20, 24, 36, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+        }
+        .status-dot-online { background-color: #23a55a; box-shadow: 0 0 10px rgba(35, 165, 90, 0.6); }
+        .status-dot-idle { background-color: #f0b232; box-shadow: 0 0 10px rgba(240, 178, 50, 0.6); }
+        .status-dot-dnd { background-color: #f23f43; box-shadow: 0 0 10px rgba(242, 63, 67, 0.6); }
+        .status-dot-offline { background-color: #80848e; }
+
+        .plat-online { color: #23a55a; border-color: rgba(35, 165, 90, 0.35); background: rgba(35, 165, 90, 0.12); }
+        .plat-idle { color: #f0b232; border-color: rgba(240, 178, 50, 0.35); background: rgba(240, 178, 50, 0.12); }
+        .plat-dnd { color: #f23f43; border-color: rgba(242, 63, 67, 0.35); background: rgba(242, 63, 67, 0.12); }
+        .plat-offline { color: #475569; border-color: rgba(71, 85, 105, 0.2); background: rgba(15, 23, 42, 0.4); opacity: 0.45; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0b0d13; }
+        ::-webkit-scrollbar-thumb { background: #262b3d; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5865f2; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Top Navigation Bar -->
+    <header class="glass sticky top-0 z-30 border-b border-white/10 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 shadow-lg shadow-indigo-500/10">
+                <i class="fa-solid fa-satellite-dish text-xl animate-pulse"></i>
+            </div>
+            <div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-lg font-bold tracking-tight text-white">Discord Presence Radar</h1>
+                    <span class="text-[11px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">Pro</span>
+                </div>
+                <p class="text-xs text-slate-400">Gerçek Zamanlı Online, Platform (PC / Mobil / Web) ve Aktivite Loglayıcı</p>
+            </div>
+        </div>
+
+        <!-- Connection Status & Actions -->
+        <div class="flex items-center gap-3 flex-wrap">
+            <div id="gatewayBadge" class="flex items-center gap-2.5 px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-white/10 text-xs">
+                <span id="gwDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+                <span id="gwText" class="font-medium text-slate-300">Bağlantı Bekleniyor...</span>
+            </div>
+
+            <button onclick="openFriendsModal()" class="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-2 transition">
+                <i class="fa-solid fa-user-plus"></i>
+                <span>Kişi / Arkadaş Ekle</span>
+            </button>
+
+            <button onclick="seedDemoData()" title="Arayüzü test etmek için örnek kişiler ve loglar ekler" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
+                <span>Demo Veri</span>
+            </button>
+
+            <button onclick="openSettingsModal()" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/25 transition">
+                <i class="fa-solid fa-key"></i>
+                <span>Discord Bağlantısı</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Error Banner if any -->
+    <div id="errorBanner" class="hidden bg-rose-950/80 border-b border-rose-500/40 px-6 py-2.5 text-xs text-rose-200 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <i class="fa-solid fa-triangle-exclamation text-rose-400"></i>
+            <span id="errorBannerText"></span>
+        </div>
+        <button onclick="openSettingsModal()" class="underline font-semibold hover:text-white">Ayarları Kontrol Et</button>
+    </div>
+
+    <!-- Summary KPI Strip -->
+    <section class="px-6 pt-5 pb-2 grid grid-cols-2 sm:grid-cols-4 gap-3.5 max-w-[1600px] w-full mx-auto">
+        <div class="glass rounded-2xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-400">Takip Edilen Kişi</p>
+                <p id="statTotalTracked" class="text-2xl font-bold text-white mt-0.5">0</p>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                <i class="fa-solid fa-users"></i>
+            </div>
+        </div>
+        <div class="glass rounded-2xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-400">Şu An Aktif (Online/DND/Idle)</p>
+                <p id="statCurrentlyOnline" class="text-2xl font-bold text-emerald-400 mt-0.5">0</p>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <i class="fa-solid fa-signal"></i>
+            </div>
+        </div>
+        <div class="glass rounded-2xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-400">Aktif Aktivite / Oyun / Spotify</p>
+                <p id="statActiveActivities" class="text-2xl font-bold text-amber-400 mt-0.5">0</p>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <i class="fa-solid fa-gamepad"></i>
+            </div>
+        </div>
+        <div class="glass rounded-2xl p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-slate-400">Toplam Kaydedilen Log</p>
+                <p id="statTotalLogs" class="text-2xl font-bold text-sky-400 mt-0.5">0</p>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5">
+
+        <!-- Left Column: Tracked Users Live Radar (7 cols) -->
+        <div class="lg:col-span-7 flex flex-col gap-4">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+                <div class="flex items-center gap-2.5">
+                    <h2 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-eye text-indigo-400"></i>
+                        <span>Canlı Kişi Radarı</span>
+                    </h2>
+                    <span class="text-xs text-slate-500">(Detaylı grafik & geçmiş için kişinin kartına tıklayın)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input id="userSearchInput" oninput="renderUsers()" type="text" placeholder="Kişi ara..." class="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                </div>
+            </div>
+
+            <!-- Users Grid -->
+            <div id="usersGrid" class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+
+        <!-- Right Column: Real-Time Event Log Stream (5 cols) -->
+        <div class="lg:col-span-5 flex flex-col gap-3">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <i class="fa-solid fa-bolt text-amber-400"></i>
+                    <span>Canlı Giriş / Çıkış & Platform Logları</span>
+                </h2>
+
+                <!-- Filters -->
+                <div class="flex items-center gap-2">
+                    <select id="logUserFilter" onchange="fetchLogs()" class="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-slate-200 focus:outline-none">
+                        <option value="">Tüm Kişiler</option>
+                    </select>
+                    <select id="logTypeFilter" onchange="fetchLogs()" class="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-slate-200 focus:outline-none">
+                        <option value="all">Tüm Olaylar</option>
+                        <option value="login">🟢 Giriş Yapanlar</option>
+                        <option value="logout">⚫ Çıkış Yapanlar</option>
+                        <option value="platform_change">📱 Platform Değişimi</option>
+                        <option value="activity_change">🎮 Aktivite / Spotify</option>
+                        <option value="status_change">🔄 Durum Değişimi</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="logsContainer" class="glass rounded-2xl p-3.5 flex-1 max-h-[720px] overflow-y-auto space-y-2.5">
+                <!-- Populated dynamically -->
+            </div>
+        </div>
+    </main>
+
+    <!-- User Detail & Analytics Modal -->
+    <div id="analyticsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-4xl w-full max-h-[90vh] overflow-y-auto border border-white/15 shadow-2xl p-6 space-y-6">
+            <div class="flex items-start justify-between gap-4 border-b border-white/10 pb-4">
+                <div class="flex items-center gap-4">
+                    <img id="modalUserAvatar" src="" class="w-16 h-16 rounded-2xl object-cover border-2 border-indigo-500/40" />
+                    <div>
+                        <h3 id="modalUserName" class="text-xl font-bold text-white"></h3>
+                        <p id="modalUserSub" class="text-xs text-slate-400 mono"></p>
+                        <div id="modalUserPlatforms" class="flex items-center gap-2 mt-2"></div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="modalDeleteBtn" class="px-3 py-1.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-medium transition">
+                        <i class="fa-solid fa-trash-can mr-1"></i> Takipten Çıkar
+                    </button>
+                    <button onclick="closeAnalyticsModal()" class="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mini KPI row -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="bg-slate-900/80 border border-white/5 rounded-2xl p-3.5">
+                    <span class="text-[11px] text-slate-400">Toplam Giriş (Online)</span>
+                    <p id="modalStatLogins" class="text-xl font-bold text-emerald-400 mt-0.5">0</p>
+                </div>
+                <div class="bg-slate-900/80 border border-white/5 rounded-2xl p-3.5">
+                    <span class="text-[11px] text-slate-400">Toplam Çıkış (Offline)</span>
+                    <p id="modalStatLogouts" class="text-xl font-bold text-rose-400 mt-0.5">0</p>
+                </div>
+                <div class="bg-slate-900/80 border border-white/5 rounded-2xl p-3.5">
+                    <span class="text-[11px] text-slate-400">Kaydedilen Çevrimiçi Süre</span>
+                    <p id="modalStatOnlineTime" class="text-xl font-bold text-indigo-400 mt-0.5">0dk</p>
+                </div>
+                <div class="bg-slate-900/80 border border-white/5 rounded-2xl p-3.5">
+                    <span class="text-[11px] text-slate-400">Son Görülme</span>
+                    <p id="modalStatLastSeen" class="text-sm font-semibold text-slate-200 mt-1">-</p>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-slate-900/70 border border-white/5 rounded-2xl p-4">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Saatlik Aktiflik Dağılımı (00:00 - 23:00)</h4>
+                    <canvas id="hourlyChart" height="170"></canvas>
+                </div>
+                <div class="bg-slate-900/70 border border-white/5 rounded-2xl p-4">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Platform Kullanım Süresi (PC vs Mobil vs Web)</h4>
+                    <canvas id="platformChart" height="170"></canvas>
+                </div>
+            </div>
+
+            <!-- Sessions & Activities Row -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-slate-900/70 border border-white/5 rounded-2xl p-4">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                        <i class="fa-solid fa-clock text-emerald-400 mr-1"></i> Giriş / Çıkış Oturum Süreleri
+                    </h4>
+                    <div id="modalSessionsList" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
+                </div>
+                <div class="bg-slate-900/70 border border-white/5 rounded-2xl p-4">
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                        <i class="fa-solid fa-gamepad text-amber-400 mr-1"></i> En Çok Oynanan / Dinlenen Aktiviteler
+                    </h4>
+                    <div id="modalActivitiesList" class="space-y-2 max-h-60 overflow-y-auto pr-1"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add User / Friends Picker Modal -->
+    <div id="friendsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-2xl w-full max-h-[88vh] flex flex-col border border-white/15 shadow-2xl p-6">
+            <div class="flex items-center justify-between border-b border-white/10 pb-4">
+                <div>
+                    <h3 class="text-lg font-bold text-white">Takip Listesine Kişi Ekle</h3>
+                    <p class="text-xs text-slate-400">Discord Kullanıcı ID'si girin veya bağlı hesabınızdaki kişilerden tek tıkla seçin</p>
+                </div>
+                <button onclick="closeFriendsModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Manual ID Input -->
+            <div class="mt-4 bg-slate-900/90 border border-white/10 rounded-2xl p-4">
+                <label class="block text-xs font-semibold text-slate-300 mb-2">Discord Kullanıcı ID ile Manuel Ekle</label>
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input id="manualUserIdInput" type="text" placeholder="Örn: 289104819283746819" class="flex-1 px-3.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono focus:outline-none focus:border-indigo-500" />
+                    <input id="manualUserNoteInput" type="text" placeholder="Özel Not / Etiket (İsteğe bağlı)" class="sm:w-48 px-3.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                    <button onclick="addManualUser()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
+                        Ekle
+                    </button>
+                </div>
+            </div>
+
+            <!-- Known Friends / Server Members Picker -->
+            <div class="mt-4 flex-1 flex flex-col min-h-0">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-slate-300">Hesabınızdaki Arkadaşlar & Ortak Sunucu Üyeleri</span>
+                    <input id="knownSearchInput" oninput="loadKnownUsers()" type="text" placeholder="İsim veya kullanıcı adı ara..." class="px-3 py-1 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                </div>
+                <div id="knownUsersList" class="flex-1 overflow-y-auto space-y-2 pr-1 mt-1">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings / Token Modal -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-xl w-full border border-white/15 shadow-2xl p-6 space-y-5">
+            <div class="flex items-center justify-between border-b border-white/10 pb-3.5">
+                <div class="flex items-center gap-2.5">
+                    <i class="fa-solid fa-key text-indigo-400"></i>
+                    <h3 class="text-lg font-bold text-white">Discord Bağlantı Ayarları</h3>
+                </div>
+                <button onclick="closeSettingsModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1.5">Discord Token (Kişisel Hesap veya Bot Tokeni)</label>
+                    <input id="tokenInput" type="password" placeholder="Tokeninizi buraya yapıştırın..." class="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono focus:outline-none focus:border-indigo-500" />
+                    <p class="text-[11px] text-slate-400 mt-1.5">
+                        🔒 Tokeniniz yalnızca kendi bilgisayarınızdaki yerel <code>stalker.db</code> veritabanında saklanır, hiçbir dış sunucuya gönderilmez.
+                    </p>
+                </div>
+
+                <div class="flex flex-col gap-2.5 bg-slate-900/70 p-3.5 rounded-2xl border border-white/5">
+                    <label class="flex items-center gap-2.5 text-xs text-slate-200 cursor-pointer">
+                        <input id="trackAllFriendsCheckbox" type="checkbox" class="rounded bg-slate-800 border-white/20 text-indigo-600 focus:ring-0" />
+                        <span>Bağlandığımda <b>tüm arkadaş listemi</b> otomatik olarak takip listesine ekle</span>
+                    </label>
+                    <label class="flex items-center gap-2.5 text-xs text-slate-200 cursor-pointer">
+                        <input id="isBotCheckbox" type="checkbox" class="rounded bg-slate-800 border-white/20 text-indigo-600 focus:ring-0" />
+                        <span>Bu bir <b>Resmi Discord Bot Tokeni</b> (Kişisel hesap kullanıyorsanız <b>işaretlemeyin</b>)</span>
+                    </label>
+                </div>
+
+                <!-- Cloud & Security Settings -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Discord Webhook URL (İsteğe Bağlı)</label>
+                        <input id="webhookInput" type="text" placeholder="https://discord.com/api/webhooks/..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono focus:outline-none focus:border-indigo-500" />
+                        <p class="text-[10px] text-slate-400 mt-1">Giriş-çıkışları özel bir Discord kanalına da mesaj atar.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Web Panel Giriş Şifresi (Bulut Koruması)</label>
+                        <input id="panelPasswordInput" type="password" placeholder="Şifre belirleyin (Boş = Şifresiz)" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                        <p class="text-[10px] text-slate-400 mt-1">Bulutta yayınladığınızda panelinize başkası giremez.</p>
+                    </div>
+                </div>
+
+                <!-- DB Backup & Restore -->
+                <div class="bg-slate-900/70 p-3.5 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <p class="text-xs font-semibold text-slate-200">Veritabanı Yedekleme (`stalker.db`)</p>
+                        <p class="text-[11px] text-slate-400">Tüm geçmiş logları indirebilir veya geri yükleyebilirsiniz.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <a href="/api/backup" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-medium flex items-center gap-1.5">
+                            <i class="fa-solid fa-download text-indigo-400"></i> Yedek İndir
+                        </a>
+                        <label class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-medium flex items-center gap-1.5 cursor-pointer">
+                            <i class="fa-solid fa-upload text-emerald-400"></i> Yedek Yükle
+                            <input type="file" accept=".db" onchange="restoreDatabase(this)" class="hidden" />
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Token Finder Guide -->
+                <div class="bg-indigo-950/30 border border-indigo-500/25 rounded-2xl p-4 text-xs space-y-2 text-slate-300">
+                    <p class="font-semibold text-indigo-300 flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <span>Kişisel Discord Tokeni Nasıl Alınır? (30 Saniye)</span>
+                    </p>
+                    <ol class="list-decimal list-inside space-y-1 text-[11px] text-slate-300/90">
+                        <li>Tarayıcıdan (Chrome/Edge/Opera) <a href="https://discord.com/app" target="_blank" class="text-indigo-400 underline">discord.com/app</a> adresini açın.</li>
+                        <li>Klavyeden <b>F12</b> tuşuna basın ve üst menüden <b>Network (Ağ)</b> sekmesine tıklayın.</li>
+                        <li>Filtre kutusuna <code>/api</code> veya <code>science</code> yazın ve Discord içinde herhangi bir kanala tıklayın.</li>
+                        <li>Listeye düşen bir isteğe tıklayıp <b>Headers (Başlıklar)</b> kısm에서 <code>Authorization</code> değerini kopyalayın.</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="flex items-center justify-end gap-2.5 pt-2">
+                <button onclick="disconnectGateway()" class="px-4 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold transition">
+                    Bağlantıyı Kes
+                </button>
+                <button onclick="saveTokenConfig()" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition">
+                    Kaydet ve Bağlan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let trackedUsers = [];
+        let logsList = [];
+        let ws = null;
+        let hourlyChartInstance = null;
+        let platformChartInstance = null;
+
+        const STATUS_LABELS = {
+            online: { text: "Çevrimiçi", dot: "status-dot-online", badge: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30" },
+            idle:   { text: "Boşta",     dot: "status-dot-idle",   badge: "bg-amber-500/15 text-amber-300 border-amber-500/30" },
+            dnd:    { text: "Rahatsız Etmeyin", dot: "status-dot-dnd", badge: "bg-rose-500/15 text-rose-300 border-rose-500/30" },
+            offline:{ text: "Çevrimdışı", dot: "status-dot-offline", badge: "bg-slate-800 text-slate-400 border-slate-700" }
+        };
+
+        function formatTime(isoStr) {
+            if (!isoStr) return "-";
+            const d = new Date(isoStr);
+            return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        }
+
+        function formatDateTime(isoStr) {
+            if (!isoStr) return "Henüz görülmedi";
+            const d = new Date(isoStr);
+            return d.toLocaleDateString("tr-TR") + " " + d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        }
+
+        function formatDuration(seconds) {
+            seconds = Math.max(0, Math.floor(seconds || 0));
+            if (seconds < 60) return `${seconds} sn`;
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            if (mins < 60) return `${mins} dk ${secs} sn`;
+            const hrs = Math.floor(mins / 60);
+            const remMins = mins % 60;
+            return `${hrs} sa ${remMins} dk`;
+        }
+
+        function platformPill(platformKey, statusVal) {
+            const icons = {
+                desktop: { icon: "fa-desktop", label: "PC / Masaüstü" },
+                mobile:  { icon: "fa-mobile-screen", label: "Mobil" },
+                web:     { icon: "fa-globe", label: "Web Tarayıcı" },
+                embedded:{ icon: "fa-gamepad", label: "Konsol" }
+            };
+            const st = statusVal || "offline";
+            const cls = `plat-${st}`;
+            const meta = icons[platformKey] || { icon: "fa-circle", label: platformKey };
+            const statusTr = STATUS_LABELS[st]?.text || st;
+            return `
+                <div title="${meta.label}: ${statusTr}" class="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-1.5 transition ${cls}">
+                    <i class="fa-solid ${meta.icon}"></i>
+                    <span class="text-[11px] font-medium">${meta.label.split(' ')[0]}</span>
+                </div>
+            `;
+        }
+
+        function updateGatewayBadge(gw) {
+            const dot = document.getElementById("gwDot");
+            const txt = document.getElementById("gwText");
+            const errBanner = document.getElementById("errorBanner");
+            const errText = document.getElementById("errorBannerText");
+
+            if (gw.last_error) {
+                errBanner.classList.remove("hidden");
+                errText.textContent = gw.last_error;
+            } else {
+                errBanner.classList.add("hidden");
+            }
+
+            if (gw.connected && gw.self_user) {
+                dot.className = "w-2.5 h-2.5 rounded-full status-dot-online";
+                txt.innerHTML = `Bağlı: <b class="text-white">${gw.self_user.global_name || gw.self_user.username}</b> <span class="text-slate-400">(${gw.known_users_count || 0} kişi önbellekte)</span>`;
+            } else if (gw.running) {
+                dot.className = "w-2.5 h-2.5 rounded-full status-dot-idle animate-ping";
+                txt.textContent = "Discord Gateway'e Bağlanılıyor...";
+            } else {
+                dot.className = "w-2.5 h-2.5 rounded-full status-dot-offline";
+                txt.textContent = gw.has_token ? "Bağlantı Kesildi" : "Token Girilmedi (Demo Modu)";
+            }
+        }
+
+        function updateKPIs() {
+            document.getElementById("statTotalTracked").textContent = trackedUsers.length;
+            const onlineCount = trackedUsers.filter(u => u.current_status && u.current_status !== "offline").length;
+            document.getElementById("statCurrentlyOnline").textContent = onlineCount;
+
+            let actCount = 0;
+            trackedUsers.forEach(u => {
+                if (Array.isArray(u.current_activities)) actCount += u.current_activities.length;
+            });
+            document.getElementById("statActiveActivities").textContent = actCount;
+            document.getElementById("statTotalLogs").textContent = logsList.length;
+
+            // Populate user filter dropdown
+            const sel = document.getElementById("logUserFilter");
+            const currentVal = sel.value;
+            sel.innerHTML = `<option value="">Tüm Kişiler</option>` + trackedUsers.map(u =>
+                `<option value="${u.user_id}">${u.global_name || u.username}</option>`
+            ).join("");
+            sel.value = currentVal;
+        }
+
+        function renderUsers() {
+            const container = document.getElementById("usersGrid");
+            const q = (document.getElementById("userSearchInput").value || "").toLowerCase().trim();
+
+            const filtered = trackedUsers.filter(u => {
+                if (!q) return true;
+                return (
+                    (u.username || "").toLowerCase().includes(q) ||
+                    (u.global_name || "").toLowerCase().includes(q) ||
+                    (u.note || "").toLowerCase().includes(q) ||
+                    (u.user_id || "").includes(q)
+                );
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full glass rounded-2xl p-8 text-center space-y-3">
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center mx-auto text-xl">
+                            <i class="fa-solid fa-user-astronaut"></i>
+                        </div>
+                        <h3 class="text-sm font-bold text-white">Henüz Takip Edilen Kişi Yok</h3>
+                        <p class="text-xs text-slate-400 max-w-md mx-auto">
+                            Üst menüdeki <b>"Kişi / Arkadaş Ekle"</b> butonuna tıklayarak ID ile kişi ekleyebilir veya <b>"Demo Veri"</b> butonuna basarak örnek ekranı inceleyebilirsiniz.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filtered.map(u => {
+                const st = u.current_status || "offline";
+                const stMeta = STATUS_LABELS[st] || STATUS_LABELS.offline;
+                const avatar = u.avatar || "https://cdn.discordapp.com/embed/avatars/0.png";
+                const activities = Array.isArray(u.current_activities) ? u.current_activities : [];
+
+                const actsHtml = activities.length > 0
+                    ? activities.map(a => {
+                        let icon = "fa-gamepad text-indigo-400";
+                        if (a.name === "Spotify" || a.type === 2) icon = "fa-brands fa-spotify text-emerald-400";
+                        else if (a.type === 4) icon = "fa-comment-dots text-amber-400";
+                        else if (a.type === 1) icon = "fa-video text-purple-400";
+
+                        return `
+                            <div class="bg-slate-900/90 border border-white/5 rounded-xl px-3 py-2 flex items-start gap-2.5">
+                                <i class="${icon} mt-0.5 text-sm"></i>
+                                <div class="min-w-0 flex-1">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-[11px] font-bold text-white truncate">${a.name}</span>
+                                        <span class="text-[10px] text-slate-400">(${a.type_name || 'Aktivite'})</span>
+                                    </div>
+                                    ${a.details ? `<p class="text-xs text-slate-300 truncate">${a.details}</p>` : ''}
+                                    ${a.state ? `<p class="text-[11px] text-slate-400 truncate">${a.state}</p>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join("")
+                    : `<div class="text-[11px] text-slate-500 italic py-1">Şu an aktif bir oyun veya Spotify aktivitesi yok</div>`;
+
+                return `
+                    <div onclick="openAnalyticsModal('${u.user_id}')" class="glass rounded-2xl p-4 hover:border-indigo-500/40 transition cursor-pointer flex flex-col justify-between gap-3 group">
+                        <div class="space-y-3">
+                            <!-- User Header -->
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="flex items-center gap-3 min-w-0">
+                                    <div class="relative flex-shrink-0">
+                                        <img src="${avatar}" class="w-12 h-12 rounded-2xl object-cover border border-white/10" />
+                                        <span class="w-3.5 h-3.5 rounded-full border-2 border-[#141824] absolute -bottom-0.5 -right-0.5 ${stMeta.dot}"></span>
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div class="flex items-center gap-2">
+                                            <h3 class="text-sm font-bold text-white truncate group-hover:text-indigo-300 transition">${u.global_name || u.username}</h3>
+                                            ${u.note ? `<span class="text-[10px] px-2 py-0.5 rounded-md bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">${u.note}</span>` : ''}
+                                        </div>
+                                        <p class="text-[11px] text-slate-400 mono truncate">@${u.username} • ${u.user_id}</p>
+                                    </div>
+                                </div>
+                                <span class="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${stMeta.badge}">
+                                    ${stMeta.text}
+                                </span>
+                            </div>
+
+                            <!-- Platforms Row (PC, Mobile, Web) -->
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                ${platformPill("desktop", u.desktop_status)}
+                                ${platformPill("mobile", u.mobile_status)}
+                                ${platformPill("web", u.web_status)}
+                                ${u.embedded_status && u.embedded_status !== 'offline' ? platformPill("embedded", u.embedded_status) : ''}
+                            </div>
+
+                            <!-- Activities -->
+                            <div class="space-y-1.5">
+                                ${actsHtml}
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-slate-400">
+                            <span>Son görülme: <b class="text-slate-300">${u.current_status !== 'offline' ? 'Şu an aktif' : formatDateTime(u.last_seen_online)}</b></span>
+                            <span class="text-indigo-400 group-hover:translate-x-0.5 transition flex items-center gap-1">
+                                Analiz <i class="fa-solid fa-arrow-right text-[10px]"></i>
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function renderLogs() {
+            const container = document.getElementById("logsContainer");
+            if (!logsList || logsList.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-12 text-xs text-slate-500">
+                        Henüz kayıtlı bir durum veya platform değişikliği logu yok.
+                    </div>
+                `;
+                return;
+            }
+
+            const badgeStyles = {
+                login:           { icon: "fa-right-to-bracket text-emerald-400", border: "border-l-4 border-l-emerald-500" },
+                logout:          { icon: "fa-power-off text-rose-400",           border: "border-l-4 border-l-rose-500" },
+                platform_change: { icon: "fa-mobile-screen-button text-sky-400", border: "border-l-4 border-l-sky-500" },
+                activity_change: { icon: "fa-gamepad text-amber-400",            border: "border-l-4 border-l-amber-500" },
+                status_change:   { icon: "fa-arrows-rotate text-indigo-400",     border: "border-l-4 border-l-indigo-500" }
+            };
+
+            container.innerHTML = logsList.map(l => {
+                const style = badgeStyles[l.event_type] || { icon: "fa-bell text-slate-400", border: "border-l-4 border-l-slate-600" };
+                const avatar = l.avatar || "https://cdn.discordapp.com/embed/avatars/0.png";
+                const newPlats = l.new_platforms || {};
+                const activePlatIcons = [];
+                if (newPlats.desktop && newPlats.desktop !== "offline") activePlatIcons.push(`<i class="fa-solid fa-desktop text-emerald-400" title="PC: ${newPlats.desktop}"></i>`);
+                if (newPlats.mobile && newPlats.mobile !== "offline") activePlatIcons.push(`<i class="fa-solid fa-mobile-screen text-emerald-400" title="Mobil: ${newPlats.mobile}"></i>`);
+                if (newPlats.web && newPlats.web !== "offline") activePlatIcons.push(`<i class="fa-solid fa-globe text-emerald-400" title="Web: ${newPlats.web}"></i>`);
+
+                return `
+                    <div onclick="openAnalyticsModal('${l.user_id}')" class="bg-slate-900/85 hover:bg-slate-900 border border-white/5 ${style.border} rounded-xl p-3 flex items-start gap-3 cursor-pointer transition">
+                        <img src="${avatar}" class="w-9 h-9 rounded-xl object-cover flex-shrink-0 mt-0.5" />
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <i class="fa-solid ${style.icon} text-xs"></i>
+                                    <span class="text-xs font-bold text-white truncate">${l.global_name || l.username}</span>
+                                    <div class="flex items-center gap-1.5 text-[11px]">${activePlatIcons.join("")}</div>
+                                </div>
+                                <span class="text-[11px] text-slate-400 mono flex-shrink-0">${formatTime(l.timestamp)}</span>
+                            </div>
+                            <p class="text-xs text-slate-300 mt-1 leading-relaxed">${l.summary}</p>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function fetchLogs() {
+            const userId = document.getElementById("logUserFilter").value;
+            const eventType = document.getElementById("logTypeFilter").value;
+            const params = new URLSearchParams();
+            if (userId) params.set("user_id", userId);
+            if (eventType && eventType !== "all") params.set("event_type", eventType);
+
+            const res = await fetch(`/api/logs?${params.toString()}`);
+            const data = await res.json();
+            logsList = data.logs || [];
+            renderLogs();
+            updateKPIs();
+        }
+
+        async function openAnalyticsModal(userId) {
+            const modal = document.getElementById("analyticsModal");
+            modal.classList.remove("hidden");
+
+            const res = await fetch(`/api/users/${userId}/analytics`);
+            const data = await res.json();
+            const u = data.user || {};
+
+            document.getElementById("modalUserAvatar").src = u.avatar || "https://cdn.discordapp.com/embed/avatars/0.png";
+            document.getElementById("modalUserName").textContent = u.global_name || u.username || userId;
+            document.getElementById("modalUserSub").textContent = `@${u.username || ''} • ID: ${u.user_id}`;
+            document.getElementById("modalUserPlatforms").innerHTML = `
+                ${platformPill("desktop", u.desktop_status)}
+                ${platformPill("mobile", u.mobile_status)}
+                ${platformPill("web", u.web_status)}
+            `;
+
+            document.getElementById("modalDeleteBtn").onclick = () => deleteUser(u.user_id);
+
+            document.getElementById("modalStatLogins").textContent = data.stats?.logins || 0;
+            document.getElementById("modalStatLogouts").textContent = data.stats?.logouts || 0;
+            const totalOnlineSec = (data.status_seconds?.online || 0) + (data.status_seconds?.idle || 0) + (data.status_seconds?.dnd || 0);
+            document.getElementById("modalStatOnlineTime").textContent = formatDuration(totalOnlineSec);
+            document.getElementById("modalStatLastSeen").textContent = u.current_status !== "offline" ? "Şu an Çevrimiçi" : formatDateTime(u.last_seen_online);
+
+            // Render Hourly Chart
+            const hourlyCtx = document.getElementById("hourlyChart").getContext("2d");
+            if (hourlyChartInstance) hourlyChartInstance.destroy();
+            hourlyChartInstance = new Chart(hourlyCtx, {
+                type: "bar",
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => `${String(i).padStart(2, '0')}:00`),
+                    datasets: [{
+                        label: "Aktivite / Durum Değişimi",
+                        data: data.hourly_activity || Array(24).fill(0),
+                        backgroundColor: "rgba(99, 102, 241, 0.65)",
+                        borderColor: "#6366f1",
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: "#94a3b8", font: { size: 10 } }, grid: { display: false } },
+                        y: { beginAtZero: true, ticks: { color: "#94a3b8", precision: 0 }, grid: { color: "rgba(255,255,255,0.05)" } }
+                    }
+                }
+            });
+
+            // Render Platform Chart
+            const platCtx = document.getElementById("platformChart").getContext("2d");
+            if (platformChartInstance) platformChartInstance.destroy();
+            const pSec = data.platform_seconds || {};
+            platformChartInstance = new Chart(platCtx, {
+                type: "doughnut",
+                data: {
+                    labels: ["Bilgisayar (PC)", "Mobil (Telefon)", "Web Tarayıcı", "Konsol"],
+                    datasets: [{
+                        data: [
+                            Math.round((pSec.desktop || 0) / 60),
+                            Math.round((pSec.mobile || 0) / 60),
+                            Math.round((pSec.web || 0) / 60),
+                            Math.round((pSec.embedded || 0) / 60)
+                        ],
+                        backgroundColor: ["#6366f1", "#10b981", "#f59e0b", "#ec4899"],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: "bottom", labels: { color: "#cbd5e1", font: { size: 11 } } }
+                    }
+                }
+            });
+
+            // Render Sessions List
+            const sessContainer = document.getElementById("modalSessionsList");
+            const sessions = data.recent_sessions || [];
+            sessContainer.innerHTML = sessions.length ? sessions.map(s => `
+                <div class="bg-slate-950/70 border border-white/5 rounded-xl p-2.5 flex items-center justify-between text-xs">
+                    <div>
+                        <span class="font-semibold text-white">${STATUS_LABELS[s.status]?.text || s.status}</span>
+                        <span class="text-slate-400 ml-1">(${(s.platforms || []).join(", ") || "Platform"})</span>
+                        <p class="text-[11px] text-slate-400 mono mt-0.5">${formatDateTime(s.started_at)} ➔ ${s.ended_at ? formatTime(s.ended_at) : 'Devam ediyor'}</p>
+                    </div>
+                    <span class="px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 font-semibold mono">
+                        ${formatDuration(s.duration_seconds)}
+                    </span>
+                </div>
+            `).join("") : `<p class="text-xs text-slate-500">Henüz oturum kaydı yok.</p>`;
+
+            // Render Top Activities List
+            const actContainer = document.getElementById("modalActivitiesList");
+            const acts = data.top_activities || [];
+            actContainer.innerHTML = acts.length ? acts.map(a => `
+                <div class="bg-slate-950/70 border border-white/5 rounded-xl p-2.5 flex items-center justify-between text-xs">
+                    <span class="font-semibold text-white">${a.name}</span>
+                    <span class="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 font-semibold mono">
+                        ${formatDuration(a.total_seconds)}
+                    </span>
+                </div>
+            `).join("") : `<p class="text-xs text-slate-500">Henüz oyun veya Spotify aktivitesi kaydedilmedi.</p>`;
+        }
+
+        function closeAnalyticsModal() {
+            document.getElementById("analyticsModal").classList.add("hidden");
+        }
+
+        async function deleteUser(userId) {
+            await fetch(`/api/users/${userId}`, { method: "DELETE" });
+            closeAnalyticsModal();
+        }
+
+        // Friends / Add User Modal
+        function openFriendsModal() {
+            document.getElementById("friendsModal").classList.remove("hidden");
+            loadKnownUsers();
+        }
+        function closeFriendsModal() {
+            document.getElementById("friendsModal").classList.add("hidden");
+        }
+
+        async function loadKnownUsers() {
+            const q = document.getElementById("knownSearchInput").value || "";
+            const res = await fetch(`/api/known-users?q=${encodeURIComponent(q)}`);
+            const data = await res.json();
+            const list = data.known_users || [];
+            const container = document.getElementById("knownUsersList");
+
+            if (list.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-8 text-xs text-slate-400">
+                        Önbellekte kişi bulunamadı. Discord hesabınızı bağladığınızda arkadaşlarınız ve ortak sunucu üyeleriniz burada listelenir.
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = list.map(u => `
+                <div class="bg-slate-900/80 border border-white/5 rounded-xl p-2.5 flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <img src="${u.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-9 h-9 rounded-xl object-cover" />
+                        <div>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-xs font-bold text-white">${u.global_name || u.username}</span>
+                                ${u.is_friend ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">Arkadaş</span>` : ''}
+                            </div>
+                            <p class="text-[11px] text-slate-400 mono">@${u.username} • ${u.user_id}</p>
+                        </div>
+                    </div>
+                    ${u.already_tracked
+                        ? `<span class="text-xs text-emerald-400 font-semibold px-3 py-1"><i class="fa-solid fa-check mr-1"></i> Takipte</span>`
+                        : `<button onclick="quickAddUser('${u.user_id}')" class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">Takibe Al</button>`
+                    }
+                </div>
+            `).join("");
+        }
+
+        async function quickAddUser(userId) {
+            await fetch("/api/users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: userId, note: "" })
+            });
+            loadKnownUsers();
+        }
+
+        async function addManualUser() {
+            const uid = document.getElementById("manualUserIdInput").value.trim();
+            const note = document.getElementById("manualUserNoteInput").value.trim();
+            if (!uid) return;
+            const res = await fetch("/api/users", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id: uid, note })
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                alert(data.error || "Hata oluştu");
+                return;
+            }
+            document.getElementById("manualUserIdInput").value = "";
+            document.getElementById("manualUserNoteInput").value = "";
+            closeFriendsModal();
+        }
+
+        // Settings Modal
+        async function openSettingsModal() {
+            document.getElementById("settingsModal").classList.remove("hidden");
+            const res = await fetch("/api/status");
+            const data = await res.json();
+            document.getElementById("isBotCheckbox").checked = !!data.settings?.is_bot;
+            document.getElementById("trackAllFriendsCheckbox").checked = !!data.settings?.track_all_friends;
+            document.getElementById("webhookInput").value = data.settings?.webhook_url || "";
+            document.getElementById("panelPasswordInput").value = data.settings?.has_password ? "***keep***" : "";
+        }
+        function closeSettingsModal() {
+            document.getElementById("settingsModal").classList.add("hidden");
+        }
+
+        async function saveTokenConfig() {
+            const token = document.getElementById("tokenInput").value.trim();
+            const is_bot = document.getElementById("isBotCheckbox").checked;
+            const track_all_friends = document.getElementById("trackAllFriendsCheckbox").checked;
+            const webhook_url = document.getElementById("webhookInput").value.trim();
+            const panel_password = document.getElementById("panelPasswordInput").value;
+
+            await fetch("/api/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token, is_bot, track_all_friends, webhook_url, panel_password })
+            });
+            document.getElementById("tokenInput").value = "";
+            closeSettingsModal();
+        }
+
+        async function restoreDatabase(inputEl) {
+            if (!inputEl.files || !inputEl.files[0]) return;
+            const formData = new FormData();
+            formData.append("file", inputEl.files[0]);
+            const res = await fetch("/api/restore", { method: "POST", body: formData });
+            const data = await res.json();
+            if (data.ok) {
+                alert("Veritabanı başarıyla geri yüklendi!");
+                location.reload();
+            } else {
+                alert("Yükleme hatası!");
+            }
+        }
+
+        async function disconnectGateway() {
+            await fetch("/api/disconnect", { method: "POST" });
+            closeSettingsModal();
+        }
+
+        async function seedDemoData() {
+            await fetch("/api/demo-data", { method: "POST" });
+            await fetchLogs();
+        }
+
+        function connectWebSocket() {
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                if (msg.type === "init") {
+                    trackedUsers = msg.users || [];
+                    logsList = msg.logs || [];
+                    updateGatewayBadge(msg.gateway || {});
+                    renderUsers();
+                    renderLogs();
+                    updateKPIs();
+                } else if (msg.type === "gateway_status") {
+                    updateGatewayBadge(msg.data || {});
+                } else if (msg.type === "users_updated") {
+                    trackedUsers = msg.data || [];
+                    renderUsers();
+                    updateKPIs();
+                } else if (msg.type === "presence_log") {
+                    if (msg.user) {
+                        const idx = trackedUsers.findIndex(u => u.user_id === msg.user.user_id);
+                        if (idx >= 0) trackedUsers[idx] = msg.user;
+                        else trackedUsers.unshift(msg.user);
+                        renderUsers();
+                    }
+                    if (msg.log) {
+                        logsList.unshift(msg.log);
+                        renderLogs();
+                    }
+                    updateKPIs();
+                }
+            };
+
+            ws.onclose = () => {
+                setTimeout(connectWebSocket, 2500);
+            };
+        }
+
+        connectWebSocket();
+    </script>
+</body>
+</html>

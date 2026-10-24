@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: discord-presence-radar
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8050
+      - key: TZ
+        value: Europe/Istanbul
