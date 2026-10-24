@@ -1,10 +1,12 @@
 import asyncio
+import hashlib
+import hmac
 import json
 import os
 import shutil
 from contextlib import asynccontextmanager
 from typing import Optional, List
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -13,6 +15,32 @@ import database as db
 from discord_gateway import DiscordStalkerGateway
 
 ws_clients: List[WebSocket] = []
+SECRET_SALT = "discord_radar_auth_salt_v1"
+
+
+def make_auth_token(password: str) -> str:
+    return hmac.new(SECRET_SALT.encode(), password.encode(), hashlib.sha256).hexdigest()
+
+
+def is_request_authenticated(request: Request) -> bool:
+    expected_pass = db.get_setting("panel_password", "")
+    if not expected_pass:
+        # If no password is set yet, allow access so the owner can set one
+        return True
+    expected_token = make_auth_token(expected_pass)
+    cookie_token = request.cookies.get("radar_session", "")
+    header_token = request.headers.get("X-Radar-Auth", "")
+    return hmac.compare_digest(cookie_token, expected_token) or hmac.compare_digest(header_token, expected_token)
+
+
+def is_ws_authenticated(websocket: WebSocket) -> bool:
+    expected_pass = db.get_setting("panel_password", "")
+    if not expected_pass:
+        return True
+    expected_token = make_auth_token(expected_pass)
+    cookie_token = websocket.cookies.get("radar_session", "")
+    query_token = websocket.query_params.get("auth", "")
+    return hmac.compare_digest(cookie_token, expected_token) or hmac.compare_digest(query_token, expected_token)
 
 
 async def broadcast_to_clients(payload: dict):
@@ -34,7 +62,6 @@ gateway = DiscordStalkerGateway(on_event_callback=broadcast_to_clients)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Allow pre-configuring via cloud environment variables as well
     env_token = os.environ.get("DISCORD_TOKEN", "").strip()
     if env_token and not db.get_setting("discord_token", ""):
         db.set_setting("discord_token", env_token)
@@ -55,9 +82,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Discord Stalker & Activity Tracker", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    path = request.url.path
+    # Public routes: index page (renders lock screen), health check, and auth endpoints
+    if path in ("/", "/health", "/api/auth", "/api/auth-status", "/api/logout"):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        if not is_request_authenticated(request):
+            return JSONResponse({"ok": False, "error": "Yetkisiz erişim! Lütfen şifre ile giriş yapın."}, status_code=401)
+
+    return await call_next(request)
+
+
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class TokenConfigRequest(BaseModel):
@@ -79,20 +120,50 @@ class AuthRequest(BaseModel):
 
 @app.get("/health")
 async def health_check():
-    """Used by UptimeRobot / Koyeb / Render to keep the free cloud server awake 24/7."""
+    """Used by UptimeRobot to keep the free cloud server awake 24/7 (Exposes no sensitive info)."""
+    return {"ok": True, "status": "alive"}
+
+
+@app.get("/api/auth-status")
+async def api_auth_status(request: Request):
+    has_password = bool(db.get_setting("panel_password", ""))
+    authenticated = is_request_authenticated(request)
     return {
-        "ok": True,
-        "gateway_connected": gateway.connected,
-        "tracked_users": len(db.get_tracked_users(only_tracked=True))
+        "has_password": has_password,
+        "authenticated": authenticated
     }
 
 
 @app.post("/api/auth")
-async def api_auth(req: AuthRequest):
+async def api_auth(req: AuthRequest, response: Response):
     expected = db.get_setting("panel_password", "")
-    if not expected or req.password == expected:
-        return {"ok": True}
+    if not expected:
+        # First time setup: if no password exists yet, set this as the new password!
+        if req.password.strip():
+            db.set_setting("panel_password", req.password.strip())
+            expected = req.password.strip()
+        else:
+            return {"ok": True}
+
+    if req.password == expected:
+        token = make_auth_token(expected)
+        res = JSONResponse({"ok": True, "token": token})
+        res.set_cookie(
+            key="radar_session",
+            value=token,
+            max_age=60 * 60 * 24 * 30,  # 30 days
+            httponly=True,
+            samesite="lax"
+        )
+        return res
     return JSONResponse({"ok": False, "error": "Hatalı panel şifresi!"}, status_code=401)
+
+
+@app.post("/api/logout")
+async def api_logout():
+    res = JSONResponse({"ok": True})
+    res.delete_cookie("radar_session")
+    return res
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -126,13 +197,30 @@ async def api_save_config(req: TokenConfigRequest):
     db.set_setting("is_bot", "1" if req.is_bot else "0")
     db.set_setting("track_all_friends", "1" if req.track_all_friends else "0")
     db.set_setting("webhook_url", req.webhook_url.strip())
+
+    new_cookie_token = None
     if req.panel_password is not None and req.panel_password.strip() != "***keep***":
-        db.set_setting("panel_password", req.panel_password.strip())
+        clean_pw = req.panel_password.strip()
+        db.set_setting("panel_password", clean_pw)
+        if clean_pw:
+            new_cookie_token = make_auth_token(clean_pw)
 
     active_token = token or db.get_setting("discord_token", "")
     if active_token:
         await gateway.start(active_token, is_bot=req.is_bot)
-    return {"ok": True, "status": gateway.get_status_info()}
+
+    res = JSONResponse({"ok": True, "status": gateway.get_status_info()})
+    if new_cookie_token:
+        res.set_cookie(
+            key="radar_session",
+            value=new_cookie_token,
+            max_age=60 * 60 * 24 * 30,
+            httponly=True,
+            samesite="lax"
+        )
+    elif req.panel_password is not None and req.panel_password.strip() == "":
+        res.delete_cookie("radar_session")
+    return res
 
 
 @app.post("/api/disconnect")
@@ -143,7 +231,6 @@ async def api_disconnect():
 
 @app.get("/api/backup")
 async def api_backup_db():
-    """Downloads the SQLite stalker.db file for backup."""
     if os.path.exists(db.DB_PATH):
         return FileResponse(
             path=db.DB_PATH,
@@ -155,7 +242,6 @@ async def api_backup_db():
 
 @app.post("/api/restore")
 async def api_restore_db(file: UploadFile = File(...)):
-    """Restores a previously backed up stalker.db file."""
     temp_path = db.DB_PATH + ".upload"
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
@@ -323,6 +409,9 @@ async def api_seed_demo_data():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    if not is_ws_authenticated(websocket):
+        await websocket.close(code=4401)
+        return
     await websocket.accept()
     ws_clients.append(websocket)
     try:

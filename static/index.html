@@ -40,6 +40,28 @@
 </head>
 <body class="min-h-screen flex flex-col">
 
+    <!-- Full-Screen Security Lock / Login Overlay -->
+    <div id="lockScreenModal" class="fixed inset-0 z-[100] hidden bg-[#07090e] flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-md w-full p-7 border border-indigo-500/30 shadow-2xl space-y-5 text-center">
+            <div class="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mx-auto text-2xl shadow-lg shadow-indigo-500/20">
+                <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <div>
+                <h2 id="lockScreenTitle" class="text-xl font-bold text-white">Panel Kilitli</h2>
+                <p id="lockScreenSubtitle" class="text-xs text-slate-400 mt-1">Devam etmek için lütfen panel güvenlik şifrenizi girin.</p>
+            </div>
+            <form onsubmit="submitLoginPassword(event)" class="space-y-3 text-left">
+                <div>
+                    <input id="loginPasswordInput" type="password" required placeholder="Panel Şifresi..." class="w-full px-4 py-3 rounded-xl bg-slate-950 border border-white/15 text-sm text-white focus:outline-none focus:border-indigo-500 text-center" />
+                    <p id="loginErrorMsg" class="hidden text-xs text-rose-400 text-center mt-2 font-medium">Hatalı şifre! Tekrar deneyin.</p>
+                </div>
+                <button type="submit" id="loginSubmitBtn" class="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-lg shadow-indigo-600/30 transition">
+                    Giriş Yap
+                </button>
+            </form>
+        </div>
+    </div>
+
     <!-- Top Navigation Bar -->
     <header class="glass sticky top-0 z-30 border-b border-white/10 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4">
         <div class="flex items-center gap-3">
@@ -75,6 +97,10 @@
             <button onclick="openSettingsModal()" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-indigo-600/25 transition">
                 <i class="fa-solid fa-key"></i>
                 <span>Discord Bağlantısı</span>
+            </button>
+
+            <button onclick="logoutAndLock()" title="Paneli Kilitle / Çıkış Yap" class="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
+                <i class="fa-solid fa-lock"></i>
             </button>
         </div>
     </header>
@@ -934,7 +960,59 @@
             };
         }
 
-        connectWebSocket();
+        async function checkAuthAndStart() {
+            const res = await fetch("/api/auth-status");
+            const data = await res.json();
+            const lockModal = document.getElementById("lockScreenModal");
+
+            if (!data.has_password) {
+                // First time setup: force user to create a password so the site is never left open!
+                document.getElementById("lockScreenTitle").textContent = "Güvenlik Şifresi Belirleyin";
+                document.getElementById("lockScreenSubtitle").textContent = "Panelinize dışarıdan kimsenin erişememesi için lütfen bir giriş şifresi oluşturun.";
+                document.getElementById("loginSubmitBtn").textContent = "Şifreyi Kaydet ve Giriş Yap";
+                lockModal.classList.remove("hidden");
+                return;
+            }
+
+            if (!data.authenticated) {
+                document.getElementById("lockScreenTitle").textContent = "Panel Kilitli";
+                document.getElementById("lockScreenSubtitle").textContent = "Devam etmek için lütfen panel güvenlik şifrenizi girin.";
+                document.getElementById("loginSubmitBtn").textContent = "Giriş Yap";
+                lockModal.classList.remove("hidden");
+                return;
+            }
+
+            lockModal.classList.add("hidden");
+            connectWebSocket();
+        }
+
+        async function submitLoginPassword(e) {
+            e.preventDefault();
+            const pw = document.getElementById("loginPasswordInput").value;
+            const errEl = document.getElementById("loginErrorMsg");
+            errEl.classList.add("hidden");
+
+            const res = await fetch("/api/auth", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password: pw })
+            });
+            if (res.ok) {
+                document.getElementById("loginPasswordInput").value = "";
+                document.getElementById("lockScreenModal").classList.add("hidden");
+                connectWebSocket();
+            } else {
+                errEl.classList.remove("hidden");
+            }
+        }
+
+        async function logoutAndLock() {
+            await fetch("/api/logout", { method: "POST" });
+            if (ws) ws.close();
+            location.reload();
+        }
+
+        checkAuthAndStart();
     </script>
 </body>
 </html>
