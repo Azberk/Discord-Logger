@@ -327,11 +327,20 @@ class DiscordStalkerGateway:
                 break
 
     async def _heartbeat_loop(self, ws: aiohttp.ClientWebSocketResponse, interval: float):
+        tick = 0
         try:
             while self.running and not ws.closed:
                 await asyncio.sleep(interval)
                 if not ws.closed:
                     await ws.send_json({"op": 1, "d": self.sequence})
+                    tick += 1
+                    # Every 2 heartbeats (~80 seconds), quietly resync tracked users in target guilds
+                    # so non-friend users who went offline or changed activity without pushing an event are caught
+                    if tick % 2 == 0 and self.connected:
+                        tracked = db.get_tracked_users(only_tracked=True)
+                        uids = [u["user_id"] for u in tracked]
+                        if uids:
+                            asyncio.create_task(self.subscribe_to_users_in_guilds(uids))
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -524,12 +533,17 @@ class DiscordStalkerGateway:
 
         elif event_name == "GUILD_MEMBERS_CHUNK":
             # Response to Opcode 8: contains members and their live presences/activities!
+            # IMPORTANT DISCORD PROTOCOL RULE: If a member is in `members` but OMITTED from `presences`,
+            # it means they are currently OFFLINE with no activities!
             chunk_guild_id = str(d.get("guild_id") or "")
             tracked_map = {u["user_id"]: u for u in db.get_tracked_users(only_tracked=True)}
+
+            chunk_member_ids = set()
             for m in d.get("members", []):
                 mu = m.get("user") or {}
                 mu_id = str(mu.get("id", ""))
                 if mu_id:
+                    chunk_member_ids.add(mu_id)
                     if chunk_guild_id:
                         self.user_guilds_map.setdefault(mu_id, set()).add(chunk_guild_id)
                     existing = self.known_users.get(mu_id, {})
@@ -544,16 +558,34 @@ class DiscordStalkerGateway:
                         "activities": existing.get("activities", [])
                     }
 
+            present_user_ids = set()
             for p in d.get("presences", []):
                 p_uid = str((p.get("user") or {}).get("id") or p.get("user_id") or "")
                 if not p_uid:
                     continue
+                present_user_ids.add(p_uid)
                 if p_uid in self.known_users:
                     self.known_users[p_uid]["status"] = p.get("status", "offline")
                     self.known_users[p_uid]["client_status"] = p.get("client_status") or {}
                     self.known_users[p_uid]["activities"] = parse_activities(p.get("activities") or [])
                 if p_uid in tracked_map:
                     await self._process_presence_payload(p, user_id_override=p_uid)
+
+            # Anyone in chunk_member_ids who is NOT in present_user_ids is 100% OFFLINE!
+            for m_uid in chunk_member_ids:
+                if m_uid not in present_user_ids:
+                    if m_uid in self.known_users:
+                        self.known_users[m_uid]["status"] = "offline"
+                        self.known_users[m_uid]["client_status"] = {}
+                        self.known_users[m_uid]["activities"] = []
+                    if m_uid in tracked_map:
+                        offline_payload = {
+                            "user": {"id": m_uid},
+                            "status": "offline",
+                            "client_status": {},
+                            "activities": []
+                        }
+                        await self._process_presence_payload(offline_payload, user_id_override=m_uid)
 
             await self.broadcast_ui({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
 
