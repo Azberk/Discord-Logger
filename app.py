@@ -107,6 +107,11 @@ class TokenConfigRequest(BaseModel):
     track_all_friends: bool = False
     webhook_url: str = ""
     panel_password: str = ""
+    activity_cooldown: int = 180
+
+
+class GuildSelectionRequest(BaseModel):
+    guild_ids: List[str]
 
 
 class AddUserRequest(BaseModel):
@@ -177,6 +182,10 @@ async def serve_index():
 
 @app.get("/api/status")
 async def api_status():
+    try:
+        cd_val = int(db.get_setting("activity_cooldown", "180") or "180")
+    except Exception:
+        cd_val = 180
     return {
         "gateway": gateway.get_status_info(),
         "settings": {
@@ -184,9 +193,38 @@ async def api_status():
             "is_bot": db.get_setting("is_bot", "0") == "1",
             "track_all_friends": db.get_setting("track_all_friends", "0") == "1",
             "webhook_url": db.get_setting("webhook_url", ""),
-            "has_password": bool(db.get_setting("panel_password", ""))
+            "has_password": bool(db.get_setting("panel_password", "")),
+            "activity_cooldown": cd_val
         }
     }
+
+
+@app.get("/api/guilds")
+async def api_get_guilds():
+    try:
+        selected = json.loads(db.get_setting("selected_guilds", "[]") or "[]")
+    except Exception:
+        selected = []
+    selected_set = set(selected)
+    guilds_list = []
+    for gid in gateway.guilds:
+        info = gateway.guild_details.get(gid, {"id": gid, "name": f"Sunucu {gid}", "icon": "", "member_count": 0})
+        item = dict(info)
+        item["selected"] = gid in selected_set
+        guilds_list.append(item)
+    return {"guilds": guilds_list, "selected_ids": selected}
+
+
+@app.post("/api/guilds")
+async def api_save_guilds(req: GuildSelectionRequest):
+    clean_ids = [str(g) for g in req.guild_ids]
+    db.set_setting("selected_guilds", json.dumps(clean_ids))
+    # Immediately trigger resync on the newly selected guilds
+    tracked = db.get_tracked_users(only_tracked=True)
+    uids = [u["user_id"] for u in tracked]
+    if uids:
+        asyncio.create_task(gateway.subscribe_to_users_in_guilds(uids))
+    return {"ok": True, "selected_count": len(clean_ids)}
 
 
 @app.post("/api/config")
@@ -197,6 +235,7 @@ async def api_save_config(req: TokenConfigRequest):
     db.set_setting("is_bot", "1" if req.is_bot else "0")
     db.set_setting("track_all_friends", "1" if req.track_all_friends else "0")
     db.set_setting("webhook_url", req.webhook_url.strip())
+    db.set_setting("activity_cooldown", str(req.activity_cooldown))
 
     new_cookie_token = None
     if req.panel_password is not None and req.panel_password.strip() != "***keep***":

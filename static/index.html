@@ -89,6 +89,11 @@
                 <span>Kişi / Arkadaş Ekle</span>
             </button>
 
+            <button onclick="openGuildsModal()" title="Hangi sunuculardaki kişilerin taranacağını seçin (Rate Limit koruması)" class="px-3.5 py-2 rounded-xl bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/30 text-xs font-semibold flex items-center gap-2 transition">
+                <i class="fa-solid fa-server"></i>
+                <span>Hedef Sunucular</span>
+            </button>
+
             <button onclick="seedDemoData()" title="Arayüzü test etmek için örnek kişiler ve loglar ekler" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-white/10 text-xs font-medium flex items-center gap-1.5 transition">
                 <i class="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
                 <span>Demo Veri</span>
@@ -369,6 +374,22 @@
                     </div>
                 </div>
 
+                <!-- Anti-Spam Activity Cooldown -->
+                <div class="bg-slate-900/70 p-3.5 rounded-2xl border border-white/5">
+                    <label class="block text-xs font-semibold text-slate-200 mb-1">
+                        <i class="fa-solid fa-shield-cat text-amber-400 mr-1"></i> Aktivite Güncelleme Spam Koruması (Cooldown)
+                    </label>
+                    <select id="activityCooldownSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500">
+                        <option value="-1">Sadece Aktivite Başladığında ve Bittiğinde Logla (Alt Detay Değişimlerini Yoksay)</option>
+                        <option value="60">Aynı aktivite alt detayı değişirse en erken 1 dakikada bir logla</option>
+                        <option value="180">Aynı aktivite alt detayı değişirse en erken 3 dakikada bir logla (Önerilen)</option>
+                        <option value="300">Aynı aktivite alt detayı değişirse en erken 5 dakikada bir logla</option>
+                        <option value="600">Aynı aktivite alt detayı değişirse en erken 10 dakikada bir logla</option>
+                        <option value="0">Limitsiz (Her saniye değişimi logla - Önerilmez)</option>
+                    </select>
+                    <p class="text-[10px] text-slate-400 mt-1">Saniyede bir skor/süre değiştiren oyunların veritabanını şişirmesini engeller. Sol kartta canlı görünmeye devam eder.</p>
+                </div>
+
                 <!-- DB Backup & Restore -->
                 <div class="bg-slate-900/70 p-3.5 rounded-2xl border border-white/5 flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -407,6 +428,40 @@
                 </button>
                 <button onclick="saveTokenConfig()" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition">
                     Kaydet ve Bağlan
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Target Guilds Selector Modal -->
+    <div id="guildsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-2xl w-full max-h-[88vh] flex flex-col border border-white/15 shadow-2xl p-6">
+            <div class="flex items-center justify-between border-b border-white/10 pb-4">
+                <div>
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <i class="fa-solid fa-server text-sky-400"></i>
+                        <span>Taranacak Hedef Sunucuları Seçin</span>
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-0.5">Sadece seçtiğiniz sunuculara durum/aktivite sorgusu atılır. Böylece Discord Rate Limit'e takılmazsınız.</p>
+                </div>
+                <button onclick="closeGuildsModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="flex items-center justify-between gap-2 mt-4 mb-2">
+                <input id="guildSearchInput" oninput="filterGuildsList()" type="text" placeholder="Sunucu adı ara..." class="flex-1 px-3.5 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                <button onclick="toggleAllGuilds(false)" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium">Seçimi Temizle</button>
+            </div>
+
+            <div id="guildsListContainer" class="flex-1 overflow-y-auto space-y-2 pr-1 mt-1">
+                <!-- Populated dynamically -->
+            </div>
+
+            <div class="flex items-center justify-between border-t border-white/10 pt-4 mt-4">
+                <span id="selectedGuildsCountText" class="text-xs text-slate-400">Hiç seçilmezse otomatik ilk 40 sunucu taranır.</span>
+                <button onclick="saveSelectedGuilds()" class="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-lg shadow-sky-600/30 transition">
+                    Seçili Sunucuları Kaydet ve Tara
                 </button>
             </div>
         </div>
@@ -889,6 +944,8 @@
             document.getElementById("trackAllFriendsCheckbox").checked = !!data.settings?.track_all_friends;
             document.getElementById("webhookInput").value = data.settings?.webhook_url || "";
             document.getElementById("panelPasswordInput").value = data.settings?.has_password ? "***keep***" : "";
+            const cdVal = data.settings?.activity_cooldown !== undefined ? String(data.settings.activity_cooldown) : "180";
+            document.getElementById("activityCooldownSelect").value = cdVal;
         }
         function closeSettingsModal() {
             document.getElementById("settingsModal").classList.add("hidden");
@@ -900,14 +957,89 @@
             const track_all_friends = document.getElementById("trackAllFriendsCheckbox").checked;
             const webhook_url = document.getElementById("webhookInput").value.trim();
             const panel_password = document.getElementById("panelPasswordInput").value;
+            const activity_cooldown = parseInt(document.getElementById("activityCooldownSelect").value || "180", 10);
 
             await fetch("/api/config", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ token, is_bot, track_all_friends, webhook_url, panel_password })
+                body: JSON.stringify({ token, is_bot, track_all_friends, webhook_url, panel_password, activity_cooldown })
             });
             document.getElementById("tokenInput").value = "";
             closeSettingsModal();
+        }
+
+        // Target Guilds Modal
+        let allGuildsCache = [];
+        let selectedGuildIdsSet = new Set();
+
+        async function openGuildsModal() {
+            document.getElementById("guildsModal").classList.remove("hidden");
+            const res = await fetch("/api/guilds");
+            const data = await res.json();
+            allGuildsCache = data.guilds || [];
+            selectedGuildIdsSet = new Set(data.selected_ids || []);
+            filterGuildsList();
+        }
+
+        function closeGuildsModal() {
+            document.getElementById("guildsModal").classList.add("hidden");
+        }
+
+        function toggleGuildId(gid) {
+            if (selectedGuildIdsSet.has(gid)) selectedGuildIdsSet.delete(gid);
+            else selectedGuildIdsSet.add(gid);
+            filterGuildsList();
+        }
+
+        function toggleAllGuilds(selectAll) {
+            if (!selectAll) selectedGuildIdsSet.clear();
+            filterGuildsList();
+        }
+
+        function filterGuildsList() {
+            const q = (document.getElementById("guildSearchInput").value || "").toLowerCase().trim();
+            const container = document.getElementById("guildsListContainer");
+            const countText = document.getElementById("selectedGuildsCountText");
+
+            countText.textContent = selectedGuildIdsSet.size > 0
+                ? `${selectedGuildIdsSet.size} sunucu seçildi (Sadece bu sunucular taranacak)`
+                : `Hiç seçilmezse otomatik ilk 40 sunucu taranır.`;
+
+            const filtered = allGuildsCache.filter(g => !q || (g.name || "").toLowerCase().includes(q) || g.id.includes(q));
+            if (filtered.length === 0) {
+                container.innerHTML = `<div class="text-center py-8 text-xs text-slate-400">Sunucu bulunamadı. Hesabınız bağlı olduğunda sunucularınız burada listelenir.</div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(g => {
+                const isSel = selectedGuildIdsSet.has(g.id);
+                const iconHtml = g.icon
+                    ? `<img src="${g.icon}" class="w-9 h-9 rounded-xl object-cover" />`
+                    : `<div class="w-9 h-9 rounded-xl bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-300">${(g.name || 'S')[0]}</div>`;
+                return `
+                    <div onclick="toggleGuildId('${g.id}')" class="p-2.5 rounded-xl border cursor-pointer flex items-center justify-between transition ${isSel ? 'bg-sky-500/15 border-sky-500/40' : 'bg-slate-900/80 border-white/5 hover:border-white/15'}">
+                        <div class="flex items-center gap-3 min-w-0">
+                            ${iconHtml}
+                            <div class="min-w-0">
+                                <p class="text-xs font-bold text-white truncate">${g.name}</p>
+                                <p class="text-[11px] text-slate-400 mono">ID: ${g.id} ${g.member_count ? `• ${g.member_count} üye` : ''}</p>
+                            </div>
+                        </div>
+                        <div class="w-5 h-5 rounded-md border flex items-center justify-center ${isSel ? 'bg-sky-500 border-sky-400 text-white' : 'border-slate-600'}">
+                            ${isSel ? '<i class="fa-solid fa-check text-[11px]"></i>' : ''}
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function saveSelectedGuilds() {
+            await fetch("/api/guilds", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ guild_ids: Array.from(selectedGuildIdsSet) })
+            });
+            closeGuildsModal();
         }
 
         async function restoreDatabase(inputEl) {

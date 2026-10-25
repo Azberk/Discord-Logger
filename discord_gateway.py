@@ -105,8 +105,11 @@ class DiscordStalkerGateway:
 
         # In-memory cache of known users (friends + guild members)
         self.known_users: Dict[str, Dict[str, Any]] = {}
-        # Guilds map for lazy subscription if needed
+        # Guilds list and metadata {guild_id: {"id", "name", "icon", "member_count"}}
         self.guilds: List[str] = []
+        self.guild_details: Dict[str, Dict[str, Any]] = {}
+        # Remember which guilds each user was seen in so we don't spam all guilds!
+        self.user_guilds_map: Dict[str, set] = {}
 
     def get_status_info(self) -> Dict[str, Any]:
         return {
@@ -192,29 +195,46 @@ class DiscordStalkerGateway:
 
     async def subscribe_to_users_in_guilds(self, user_ids: List[str]):
         """
-        Sends both Opcode 8 (Request Guild Members with presences=True) and Opcode 14 (Lazy Guild Subscriptions)
-        across all shared servers so Discord immediately returns current presences (via GUILD_MEMBERS_CHUNK)
-        and subscribes to real-time PRESENCE_UPDATE events even for non-friend server members.
+        Sends Opcode 8 + Opcode 14 only to user-selected guilds (or guilds where the user is known to be),
+        preventing Discord Gateway rate-limiting.
         """
         if not self.connected or not self.ws or self.ws.closed or not user_ids:
             return
         clean_uids = [str(uid) for uid in user_ids[:100]]
+
+        # Check if user configured specific target guilds
         try:
-            for guild_id in self.guilds:
+            selected_guilds = json.loads(db.get_setting("selected_guilds", "[]") or "[]")
+        except Exception:
+            selected_guilds = []
+
+        if selected_guilds:
+            target_guilds = [g for g in selected_guilds if g in self.guilds]
+        else:
+            target_guilds = list(self.guilds[:40])
+
+        try:
+            for guild_id in target_guilds:
                 if self.ws.closed:
                     break
-                # 1. Opcode 8: Request exact member presence & activity snapshot right now
+                # Filter clean_uids: if we already know which guild a user belongs to, only query that guild
+                uids_for_this_guild = [
+                    u for u in clean_uids
+                    if (u not in self.user_guilds_map) or (guild_id in self.user_guilds_map[u]) or bool(selected_guilds)
+                ]
+                if not uids_for_this_guild:
+                    continue
+
                 op8_payload = {
                     "op": 8,
                     "d": {
                         "guild_id": str(guild_id),
-                        "user_ids": clean_uids,
+                        "user_ids": uids_for_this_guild,
                         "presences": True
                     }
                 }
                 await self.ws.send_json(op8_payload)
 
-                # 2. Opcode 14: Subscribe to future PRESENCE_UPDATE events for these members (User accounts only)
                 if not self.is_bot:
                     op14_payload = {
                         "op": 14,
@@ -223,11 +243,11 @@ class DiscordStalkerGateway:
                             "typing": True,
                             "activities": True,
                             "threads": False,
-                            "members": clean_uids
+                            "members": uids_for_this_guild
                         }
                     }
                     await self.ws.send_json(op14_payload)
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(0.15)
         except Exception as e:
             logger.debug(f"Guild subscription warning: {e}")
 
@@ -407,15 +427,28 @@ class DiscordStalkerGateway:
 
             # Extract guild IDs and members if provided in READY
             self.guilds = []
+            self.guild_details = {}
             for g in d.get("guilds", []):
                 gid = str(g.get("id", ""))
                 if gid:
                     self.guilds.append(gid)
+                    props = g.get("properties") or g
+                    g_name = props.get("name") or g.get("name") or f"Sunucu {gid[-4:]}"
+                    g_icon = props.get("icon") or g.get("icon")
+                    icon_url = f"https://cdn.discordapp.com/icons/{gid}/{g_icon}.png?size=64" if g_icon else ""
+                    self.guild_details[gid] = {
+                        "id": gid,
+                        "name": g_name,
+                        "icon": icon_url,
+                        "member_count": g.get("member_count") or 0
+                    }
                 for m in g.get("members", []):
                     mu = m.get("user") or {}
                     mu_id = str(mu.get("id", ""))
                     if mu_id:
                         users_map[mu_id] = mu
+                        if gid:
+                            self.user_guilds_map.setdefault(mu_id, set()).add(gid)
 
             # Populate known_users cache
             for u_id, u_data in users_map.items():
@@ -491,11 +524,14 @@ class DiscordStalkerGateway:
 
         elif event_name == "GUILD_MEMBERS_CHUNK":
             # Response to Opcode 8: contains members and their live presences/activities!
+            chunk_guild_id = str(d.get("guild_id") or "")
             tracked_map = {u["user_id"]: u for u in db.get_tracked_users(only_tracked=True)}
             for m in d.get("members", []):
                 mu = m.get("user") or {}
                 mu_id = str(mu.get("id", ""))
                 if mu_id:
+                    if chunk_guild_id:
+                        self.user_guilds_map.setdefault(mu_id, set()).add(chunk_guild_id)
                     existing = self.known_users.get(mu_id, {})
                     self.known_users[mu_id] = {
                         "user_id": mu_id,

@@ -1,10 +1,14 @@
 import sqlite3
 import json
 import os
+import time
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stalker.db")
+
+# In-memory cooldown tracker for noisy activity sub-text updates: {(user_id, activity_name): last_logged_epoch}
+_activity_update_cooldowns: Dict[Tuple[str, str], float] = {}
 
 
 def get_conn() -> sqlite3.Connection:
@@ -367,18 +371,51 @@ def record_presence_update(
             a.get("details") != old_names[name].get("details") or a.get("state") != old_names[name].get("state")
         )]
 
+        # Apply Activity Update Cooldown so per-second RPC changes don't bloat the database
+        try:
+            cooldown_Row = conn.execute("SELECT value FROM settings WHERE key = 'activity_cooldown'").fetchone()
+            cooldown_sec = int(cooldown_Row["value"]) if cooldown_Row and cooldown_Row["value"] != "" else 180
+        except Exception:
+            cooldown_sec = 180
+
+        now_epoch = time.time()
+        filtered_updated = []
+        for a in updated:
+            act_name = a.get("name", "Aktivite")
+            # If cooldown_sec == -1, user chose "Never log sub-updates (only start/stop)"
+            if cooldown_sec < 0:
+                continue
+            # For Spotify, if the song title (details) changed, log it unless changed within 15s
+            is_spotify_new_song = (act_name == "Spotify" and a.get("details") != old_names.get(act_name, {}).get("details"))
+            effective_cd = 15 if is_spotify_new_song else cooldown_sec
+
+            key = (user_id, act_name)
+            last_t = _activity_update_cooldowns.get(key, 0.0)
+            if (now_epoch - last_t) >= effective_cd:
+                _activity_update_cooldowns[key] = now_epoch
+                filtered_updated.append(a)
+
         for a in started:
             act_label = a.get("name", "Aktivite")
+            _activity_update_cooldowns[(user_id, act_label)] = now_epoch
             detail_str = f" ({a.get('details') or a.get('state')})" if (a.get("details") or a.get("state")) else ""
             summary_parts.append(f"Aktivite başladı: {act_label}{detail_str}")
         for a in stopped:
-            summary_parts.append(f"Aktivite bitti: {a.get('name', 'Aktivite')}")
-        for a in updated:
+            act_label = a.get("name", "Aktivite")
+            _activity_update_cooldowns.pop((user_id, act_label), None)
+            summary_parts.append(f"Aktivite bitti: {act_label}")
+        for a in filtered_updated:
             act_label = a.get("name", "Aktivite")
             detail_str = " - ".join([x for x in [a.get("details"), a.get("state")] if x])
             summary_parts.append(f"Aktivite güncellendi: {act_label} ({detail_str})")
 
-    summary = " • ".join(summary_parts) if summary_parts else "Durum güncellendi"
+    # If the only thing that happened was a throttled/ignored activity sub-update, commit the live card state and skip inserting a log row!
+    if not summary_parts:
+        conn.commit()
+        conn.close()
+        return None
+
+    summary = " • ".join(summary_parts)
 
     # Manage status_sessions
     if status_changed or platforms_changed:
