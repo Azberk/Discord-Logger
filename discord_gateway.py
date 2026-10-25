@@ -192,26 +192,42 @@ class DiscordStalkerGateway:
 
     async def subscribe_to_users_in_guilds(self, user_ids: List[str]):
         """
-        Sends Opcode 14 (Lazy Request / Guild Subscriptions) for user accounts
-        so Discord pushes PRESENCE_UPDATE events even for non-friend users in shared servers.
+        Sends both Opcode 8 (Request Guild Members with presences=True) and Opcode 14 (Lazy Guild Subscriptions)
+        across all shared servers so Discord immediately returns current presences (via GUILD_MEMBERS_CHUNK)
+        and subscribes to real-time PRESENCE_UPDATE events even for non-friend server members.
         """
-        if not self.connected or not self.ws or self.ws.closed or self.is_bot or not user_ids:
+        if not self.connected or not self.ws or self.ws.closed or not user_ids:
             return
+        clean_uids = [str(uid) for uid in user_ids[:100]]
         try:
-            for guild_id in self.guilds[:75]:  # Subscribe across shared guilds
-                payload = {
-                    "op": 14,
+            for guild_id in self.guilds:
+                if self.ws.closed:
+                    break
+                # 1. Opcode 8: Request exact member presence & activity snapshot right now
+                op8_payload = {
+                    "op": 8,
                     "d": {
                         "guild_id": str(guild_id),
-                        "typing": True,
-                        "activities": True,
-                        "threads": False,
-                        "member_updates": False,
-                        "members": [str(uid) for uid in user_ids[:100]]
+                        "user_ids": clean_uids,
+                        "presences": True
                     }
                 }
-                await self.ws.send_json(payload)
-                await asyncio.sleep(0.05)
+                await self.ws.send_json(op8_payload)
+
+                # 2. Opcode 14: Subscribe to future PRESENCE_UPDATE events for these members (User accounts only)
+                if not self.is_bot:
+                    op14_payload = {
+                        "op": 14,
+                        "d": {
+                            "guild_id": str(guild_id),
+                            "typing": True,
+                            "activities": True,
+                            "threads": False,
+                            "members": clean_uids
+                        }
+                    }
+                    await self.ws.send_json(op14_payload)
+                await asyncio.sleep(0.08)
         except Exception as e:
             logger.debug(f"Guild subscription warning: {e}")
 
@@ -470,6 +486,38 @@ class DiscordStalkerGateway:
                     self.known_users[p_uid]["activities"] = parse_activities(p.get("activities") or [])
                 if p_uid in tracked_map:
                     await self._process_presence_payload(p, user_id_override=p_uid, initial_sync=True)
+
+            await self.broadcast_ui({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
+
+        elif event_name == "GUILD_MEMBERS_CHUNK":
+            # Response to Opcode 8: contains members and their live presences/activities!
+            tracked_map = {u["user_id"]: u for u in db.get_tracked_users(only_tracked=True)}
+            for m in d.get("members", []):
+                mu = m.get("user") or {}
+                mu_id = str(mu.get("id", ""))
+                if mu_id:
+                    existing = self.known_users.get(mu_id, {})
+                    self.known_users[mu_id] = {
+                        "user_id": mu_id,
+                        "username": mu.get("username") or existing.get("username", ""),
+                        "global_name": mu.get("global_name") or mu.get("username") or existing.get("global_name", ""),
+                        "avatar": format_avatar_url(mu_id, mu.get("avatar")),
+                        "is_friend": existing.get("is_friend", False),
+                        "status": existing.get("status", "offline"),
+                        "client_status": existing.get("client_status", {}),
+                        "activities": existing.get("activities", [])
+                    }
+
+            for p in d.get("presences", []):
+                p_uid = str((p.get("user") or {}).get("id") or p.get("user_id") or "")
+                if not p_uid:
+                    continue
+                if p_uid in self.known_users:
+                    self.known_users[p_uid]["status"] = p.get("status", "offline")
+                    self.known_users[p_uid]["client_status"] = p.get("client_status") or {}
+                    self.known_users[p_uid]["activities"] = parse_activities(p.get("activities") or [])
+                if p_uid in tracked_map:
+                    await self._process_presence_payload(p, user_id_override=p_uid)
 
             await self.broadcast_ui({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
 

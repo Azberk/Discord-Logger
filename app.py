@@ -328,13 +328,26 @@ async def api_delete_user(user_id: str):
     return {"ok": True}
 
 
+@app.post("/api/resync")
+async def api_resync_presences():
+    """Forces an immediate Opcode 8 + Opcode 14 presence & activity scan across all shared guilds."""
+    tracked = db.get_tracked_users(only_tracked=True)
+    uids = [u["user_id"] for u in tracked]
+    if uids:
+        asyncio.create_task(gateway.subscribe_to_users_in_guilds(uids))
+    return {"ok": True, "synced_count": len(uids)}
+
+
 @app.get("/api/logs")
 async def api_get_logs(
     user_id: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
-    limit: int = Query(150)
+    limit: int = Query(500)
 ):
-    return {"logs": db.get_logs(user_id=user_id, event_type=event_type, limit=limit)}
+    return {
+        "logs": db.get_logs(user_id=user_id, event_type=event_type, limit=limit),
+        "total_count": db.get_total_logs_count()
+    }
 
 
 @app.get("/api/users/{user_id}/analytics")
@@ -419,7 +432,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "type": "init",
             "gateway": gateway.get_status_info(),
             "users": db.get_tracked_users(only_tracked=True),
-            "logs": db.get_logs(limit=100)
+            "logs": db.get_logs(limit=500),
+            "total_logs_count": db.get_total_logs_count()
         }, ensure_ascii=False))
         while True:
             await websocket.receive_text()

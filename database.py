@@ -489,7 +489,14 @@ def record_presence_update(
     }
 
 
-def get_logs(user_id: Optional[str] = None, event_type: Optional[str] = None, limit: int = 150) -> List[Dict[str, Any]]:
+def get_total_logs_count() -> int:
+    conn = get_conn()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM presence_logs").fetchone()
+    conn.close()
+    return (row["cnt"] or 0) if row else 0
+
+
+def get_logs(user_id: Optional[str] = None, event_type: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
     conn = get_conn()
     query = """
         SELECT l.*, u.avatar, u.global_name

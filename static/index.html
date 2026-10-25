@@ -168,6 +168,10 @@
                     <span class="text-xs text-slate-500">(Detaylı grafik & geçmiş için kişinin kartına tıklayın)</span>
                 </div>
                 <div class="flex items-center gap-2">
+                    <button onclick="forceResyncPresences(this)" title="Ortak sunuculardaki tüm takip edilen kişilerin anlık durumunu ve ne oynadığını zorla tarar" class="px-3 py-1.5 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 text-xs font-semibold flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-rotate"></i>
+                        <span>Durumları Tara</span>
+                    </button>
                     <input id="userSearchInput" oninput="renderUsers()" type="text" placeholder="Kişi ara..." class="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
                 </div>
             </div>
@@ -411,6 +415,7 @@
     <script>
         let trackedUsers = [];
         let logsList = [];
+        let totalLogsCount = 0;
         let ws = null;
         let hourlyChartInstance = null;
         let platformChartInstance = null;
@@ -499,7 +504,7 @@
                 if (Array.isArray(u.current_activities)) actCount += u.current_activities.length;
             });
             document.getElementById("statActiveActivities").textContent = actCount;
-            document.getElementById("statTotalLogs").textContent = logsList.length;
+            document.getElementById("statTotalLogs").textContent = Math.max(totalLogsCount, logsList.length);
 
             // Populate user filter dropdown
             const sel = document.getElementById("logUserFilter");
@@ -674,8 +679,16 @@
             const res = await fetch(`/api/logs?${params.toString()}`);
             const data = await res.json();
             logsList = data.logs || [];
+            if (typeof data.total_count === "number") totalLogsCount = data.total_count;
             renderLogs();
             updateKPIs();
+        }
+
+        async function forceResyncPresences(btn) {
+            const icon = btn.querySelector("i");
+            icon.classList.add("fa-spin");
+            await fetch("/api/resync", { method: "POST" });
+            setTimeout(() => icon.classList.remove("fa-spin"), 1200);
         }
 
         async function openAnalyticsModal(userId) {
@@ -930,6 +943,7 @@
                 if (msg.type === "init") {
                     trackedUsers = msg.users || [];
                     logsList = msg.logs || [];
+                    totalLogsCount = msg.total_logs_count || logsList.length;
                     updateGatewayBadge(msg.gateway || {});
                     renderUsers();
                     renderLogs();
@@ -949,6 +963,7 @@
                     }
                     if (msg.log) {
                         logsList.unshift(msg.log);
+                        totalLogsCount++;
                         renderLogs();
                     }
                     updateKPIs();
