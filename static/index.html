@@ -84,6 +84,11 @@
                 <span id="gwText" class="font-medium text-slate-300">Bağlantı Bekleniyor...</span>
             </div>
 
+            <button onclick="openManualLogModal()" title="Görünmez (Invisible) olduğunu bildiğiniz veya dışarıdan gördüğünüz bir durumu manuel kaydedin" class="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-2 transition">
+                <i class="fa-solid fa-user-secret"></i>
+                <span>Manuel / Invis Log Ekle</span>
+            </button>
+
             <button onclick="openFriendsModal()" class="px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-2 transition">
                 <i class="fa-solid fa-user-plus"></i>
                 <span>Kişi / Arkadaş Ekle</span>
@@ -159,8 +164,24 @@
         </div>
     </section>
 
-    <!-- Main Content Grid -->
-    <main class="flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5">
+    <!-- Main Navigation Tabs -->
+    <nav class="px-6 pt-3 pb-1 max-w-[1600px] w-full mx-auto flex items-center gap-2 overflow-x-auto">
+        <button id="tabBtnRadar" onclick="switchTab('radar')" class="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition bg-indigo-600 text-white shadow-lg shadow-indigo-600/25">
+            <i class="fa-solid fa-satellite-dish"></i>
+            <span>Canlı Radar & Özet Akış</span>
+        </button>
+        <button id="tabBtnTimeline" onclick="switchTab('timeline')" class="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition glass text-slate-300 hover:text-white">
+            <i class="fa-solid fa-calendar-days text-amber-400"></i>
+            <span>Detaylı Zaman Çizelgesi & Müzik / Aktivite Sırası</span>
+        </button>
+        <button id="tabBtnValorant" onclick="switchTab('valorant')" class="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition glass text-slate-300 hover:text-white">
+            <i class="fa-solid fa-crosshairs text-rose-400"></i>
+            <span>Valorant Takibi & Çapraz Referans (Invis Avcısı)</span>
+        </button>
+    </nav>
+
+    <!-- TAB 1: Main Content Grid (Canlı Radar) -->
+    <main id="tabContentRadar" class="flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5">
 
         <!-- Left Column: Tracked Users Live Radar (7 cols) -->
         <div class="lg:col-span-7 flex flex-col gap-4">
@@ -202,6 +223,9 @@
                     </select>
                     <select id="logTypeFilter" onchange="fetchLogs()" class="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-slate-200 focus:outline-none">
                         <option value="all">Tüm Olaylar</option>
+                        <option value="invis_detected">🚨 Görünmez (Invis) Yakalananlar</option>
+                        <option value="manual_log">📝 Manuel Gözlem Kayıtları</option>
+                        <option value="valorant_match">🎯 Valorant Maçları</option>
                         <option value="login">🟢 Giriş Yapanlar</option>
                         <option value="logout">⚫ Çıkış Yapanlar</option>
                         <option value="platform_change">📱 Platform Değişimi</option>
@@ -216,6 +240,138 @@
             </div>
         </div>
     </main>
+
+    <!-- TAB 2: Detailed Timeline & Chronological Music/Activity History -->
+    <section id="tabContentTimeline" class="hidden flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto space-y-5">
+        <div class="glass rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h2 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-calendar-check text-amber-400"></i>
+                    <span>Detaylı Günlük Zaman Çizelgesi & Sıralı Müzik / Oyun Geçmişi</span>
+                </h2>
+                <p class="text-xs text-slate-400">Kişinin hangi gün, saat kaçta ne yaptığını ve sırasıyla dinlediği müzikleri inceleyin</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2.5">
+                <select id="tlUserFilter" onchange="loadDetailedTimeline()" class="px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none">
+                    <option value="">Tüm Kişiler</option>
+                </select>
+                <input id="tlDateFilter" type="date" onchange="loadDetailedTimeline()" class="px-3 py-2 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none" />
+                <button onclick="document.getElementById('tlDateFilter').value=''; loadDetailedTimeline();" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300">Tüm Günler</button>
+                <button onclick="loadDetailedTimeline()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white">
+                    <i class="fa-solid fa-rotate mr-1"></i> Yenile
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <!-- Chronological Day-Grouped Timeline (7 cols) -->
+            <div class="lg:col-span-7 glass rounded-2xl p-5 space-y-4 max-h-[780px] overflow-y-auto">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-2">
+                    <i class="fa-solid fa-timeline"></i>
+                    <span>Gün Gün Kronolojik Olay Çizelgesi (Tarih & Saat Detaylı)</span>
+                </h3>
+                <div id="timelineGroupedContainer" class="space-y-6">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- Right Column: Sequential Spotify Playlist & Activity Sessions (5 cols) -->
+            <div class="lg:col-span-5 flex flex-col gap-5">
+                <div class="glass rounded-2xl p-5 space-y-3 max-h-[380px] overflow-y-auto">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2">
+                        <i class="fa-brands fa-spotify text-base"></i>
+                        <span>Sırasıyla Dinlenen Müzikler (Spotify Geçmişi)</span>
+                    </h3>
+                    <div id="timelineSpotifyContainer" class="space-y-2">
+                        <!-- Populated via JS -->
+                    </div>
+                </div>
+
+                <div class="glass rounded-2xl p-5 space-y-3 max-h-[380px] overflow-y-auto">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-2">
+                        <i class="fa-solid fa-gamepad text-base"></i>
+                        <span>Oyun & Aktivite Oturum Süreleri (Başlangıç ➔ Bitiş)</span>
+                    </h3>
+                    <div id="timelineSessionsContainer" class="space-y-2">
+                        <!-- Populated via JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- TAB 3: Valorant Tracker & Cross-Reference (Invis Hunter) -->
+    <section id="tabContentValorant" class="hidden flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto space-y-5">
+        <div class="glass rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-2">
+                    <h2 class="text-base font-bold text-white">🎯 Valorant Maç Takibi & Discord Çapraz Referans Dedektifi</h2>
+                    <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold">Invis Avcısı</span>
+                </div>
+                <p class="text-xs text-slate-400 mt-1">
+                    Takip edilen kişilerin Valorant maç saatlerini Discord online kayıtlarıyla otomatik karşılaştırır. Kişi Discord'da <b>Görünmez (Offline)</b> iken maç attıysa anında yakalar!
+                </p>
+            </div>
+            <div class="flex items-center gap-2.5 flex-wrap">
+                <button onclick="openManualValorantModal()" class="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Manuel Valorant Maçı Gir & Karşılaştır</span>
+                </button>
+                <button onclick="syncValorantMatches(this)" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 flex items-center gap-2 transition">
+                    <i class="fa-solid fa-satellite"></i>
+                    <span>Valorant Maçlarını Şimdi Tara (API)</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <!-- Left: Link Riot ID to Tracked Users (4 cols) -->
+            <div class="lg:col-span-4 glass rounded-2xl p-5 space-y-4">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <i class="fa-solid fa-link text-rose-400"></i>
+                    <span>Kişilere Valorant Hesabı (Riot ID) Bağla</span>
+                </h3>
+                <div class="bg-slate-900/90 border border-white/10 rounded-2xl p-3.5 space-y-3">
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Discord Kişisi Seç</label>
+                        <select id="valLinkUserSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white"></select>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <div class="col-span-2">
+                            <label class="block text-[11px] text-slate-400 mb-1">Riot Oyuncu Adı</label>
+                            <input id="valLinkNameInput" type="text" placeholder="Örn: TenZ" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-slate-400 mb-1">Etiket (#TAG)</label>
+                            <input id="valLinkTagInput" type="text" placeholder="TR1" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono" />
+                        </div>
+                    </div>
+                    <button onclick="saveValorantAccountLink()" class="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
+                        Riot Hesabını Kaydet
+                    </button>
+                </div>
+
+                <div class="space-y-2">
+                    <p class="text-xs font-semibold text-slate-400">Bağlı Valorant Hesapları</p>
+                    <div id="linkedValorantUsersList" class="space-y-2 max-h-[420px] overflow-y-auto"></div>
+                </div>
+            </div>
+
+            <!-- Right: Cross-Referenced Valorant Matches (8 cols) -->
+            <div class="lg:col-span-8 glass rounded-2xl p-5 space-y-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-magnifying-glass-chart text-rose-400"></i>
+                        <span>Kaydedilen Valorant Maçları & Discord Çapraz Referans Sonuçları</span>
+                    </h3>
+                    <span id="valSyncStatusText" class="text-xs text-slate-400"></span>
+                </div>
+                <div id="valorantMatchesContainer" class="space-y-3 max-h-[620px] overflow-y-auto pr-1">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+        </div>
+    </section>
 
     <!-- User Detail & Analytics Modal -->
     <div id="analyticsModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -361,16 +517,18 @@
                 </div>
 
                 <!-- Cloud & Security Settings -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                         <label class="block text-xs font-semibold text-slate-300 mb-1">Discord Webhook URL (İsteğe Bağlı)</label>
                         <input id="webhookInput" type="text" placeholder="https://discord.com/api/webhooks/..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono focus:outline-none focus:border-indigo-500" />
-                        <p class="text-[10px] text-slate-400 mt-1">Giriş-çıkışları özel bir Discord kanalına da mesaj atar.</p>
                     </div>
                     <div>
-                        <label class="block text-xs font-semibold text-slate-300 mb-1">Web Panel Giriş Şifresi (Bulut Koruması)</label>
-                        <input id="panelPasswordInput" type="password" placeholder="Şifre belirleyin (Boş = Şifresiz)" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
-                        <p class="text-[10px] text-slate-400 mt-1">Bulutta yayınladığınızda panelinize başkası giremez.</p>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">Web Panel Giriş Şifresi</label>
+                        <input id="panelPasswordInput" type="password" placeholder="Şifre (Boş = Şifresiz)" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">HenrikDev Valorant API Key (İsteğe Bağlı)</label>
+                        <input id="henrikApiKeyInput" type="password" placeholder="HDEV-..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono focus:outline-none focus:border-indigo-500" />
                     </div>
                 </div>
 
@@ -467,6 +625,117 @@
         </div>
     </div>
 
+    <!-- Manual Log / Invisible Observation Modal -->
+    <div id="manualLogModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-lg w-full border border-white/15 shadow-2xl p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-white/10 pb-3.5">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-user-secret text-amber-400 text-lg"></i>
+                    <h3 class="text-base font-bold text-white">Manuel Gözlem / Görünmez (Invis) Logu Ekle</h3>
+                </div>
+                <button onclick="closeManualLogModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">Kişi Seçin</label>
+                    <select id="manualLogUserSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white"></select>
+                </div>
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">Kayıt Türü</label>
+                    <select id="manualLogTypeSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white">
+                        <option value="invis_detected">🚨 Görünmezde (Invis) Aktif Yakalandı</option>
+                        <option value="manual_log">📝 Özel Gözlem / Not Kaydı</option>
+                    </select>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Oyun / Aktivite Adı (İsteğe Bağlı)</label>
+                        <input id="manualLogActivityInput" type="text" placeholder="Örn: Valorant, CS2, Sesli Oda" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Tarih & Saat (Boş = Şu an)</label>
+                        <input id="manualLogTimeInput" type="datetime-local" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">Gözlem Detayı / Açıklama</label>
+                    <textarea id="manualLogSummaryInput" rows="3" placeholder="Örn: Discord'da çevrimdışı (invis) görünmesine rağmen oyunda aktif olarak görüldü..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white"></textarea>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeManualLogModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold">İptal</button>
+                <button onclick="submitManualLog()" class="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold shadow-lg shadow-amber-600/25">Logu Kaydet</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Valorant Match Entry Modal -->
+    <div id="manualValorantModal" class="fixed inset-0 z-50 hidden bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass rounded-3xl max-w-lg w-full border border-white/15 shadow-2xl p-6 space-y-4">
+            <div class="flex items-center justify-between border-b border-white/10 pb-3.5">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-crosshairs text-rose-400 text-lg"></i>
+                    <h3 class="text-base font-bold text-white">Valorant Maçı Ekle & Discord İle Çapraz Karşılaştır</h3>
+                </div>
+                <button onclick="closeManualValorantModal()" class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-xs">
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">Kişi Seçin</label>
+                    <select id="manValUserSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white"></select>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Harita</label>
+                        <input id="manValMapInput" type="text" value="Ascent" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Oynadığı Ajan</label>
+                        <input id="manValAgentInput" type="text" value="Jett" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                </div>
+                <div class="grid grid-cols-4 gap-2">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Kill</label>
+                        <input id="manValKills" type="number" value="18" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Death</label>
+                        <input id="manValDeaths" type="number" value="12" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Assist</label>
+                        <input id="manValAssists" type="number" value="5" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Skor</label>
+                        <input id="manValScore" type="text" value="13 - 9" class="w-full px-2.5 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2.5">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Maç Başlangıç Tarihi & Saati</label>
+                        <input id="manValStartInput" type="datetime-local" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">Maç Süresi (Dakika)</label>
+                        <input id="manValDurationInput" type="number" value="35" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 pt-2">
+                <button onclick="closeManualValorantModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold">İptal</button>
+                <button onclick="submitManualValorantMatch()" class="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30">Maçı Kaydet ve Çapraz Kontrol Et</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let trackedUsers = [];
         let logsList = [];
@@ -491,7 +760,15 @@
         function formatDateTime(isoStr) {
             if (!isoStr) return "Henüz görülmedi";
             const d = new Date(isoStr);
-            return d.toLocaleDateString("tr-TR") + " " + d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+            if (isNaN(d.getTime())) return isoStr;
+            return d.toLocaleDateString("tr-TR", { day: "2-digit", month: "short", year: "numeric" }) + " • " + d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        }
+
+        function formatFullDayLabel(isoStr) {
+            if (!isoStr) return "Tarih Yok";
+            const d = new Date(isoStr);
+            if (isNaN(d.getTime())) return isoStr;
+            return d.toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
         }
 
         function formatDuration(seconds) {
@@ -561,13 +838,29 @@
             document.getElementById("statActiveActivities").textContent = actCount;
             document.getElementById("statTotalLogs").textContent = Math.max(totalLogsCount, logsList.length);
 
-            // Populate user filter dropdown
-            const sel = document.getElementById("logUserFilter");
-            const currentVal = sel.value;
-            sel.innerHTML = `<option value="">Tüm Kişiler</option>` + trackedUsers.map(u =>
+            // Populate user filter dropdowns across all tabs & modals
+            const userOptionsHtml = trackedUsers.map(u =>
                 `<option value="${u.user_id}">${u.global_name || u.username}</option>`
             ).join("");
-            sel.value = currentVal;
+
+            ["logUserFilter", "tlUserFilter"].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const cv = el.value;
+                    el.innerHTML = `<option value="">Tüm Kişiler</option>` + userOptionsHtml;
+                    el.value = cv;
+                }
+            });
+
+            ["valLinkUserSelect", "manualLogUserSelect", "manValUserSelect"].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const cv = el.value;
+                    el.innerHTML = userOptionsHtml || `<option value="">Önce kişi ekleyin</option>`;
+                    if (cv) el.value = cv;
+                }
+            });
+            renderLinkedValorantUsers();
         }
 
         function renderUsers() {
@@ -689,11 +982,15 @@
             }
 
             const badgeStyles = {
-                login:           { icon: "fa-right-to-bracket text-emerald-400", border: "border-l-4 border-l-emerald-500" },
-                logout:          { icon: "fa-power-off text-rose-400",           border: "border-l-4 border-l-rose-500" },
-                platform_change: { icon: "fa-mobile-screen-button text-sky-400", border: "border-l-4 border-l-sky-500" },
-                activity_change: { icon: "fa-gamepad text-amber-400",            border: "border-l-4 border-l-amber-500" },
-                status_change:   { icon: "fa-arrows-rotate text-indigo-400",     border: "border-l-4 border-l-indigo-500" }
+                invis_detected:  { icon: "fa-user-secret text-rose-400 animate-pulse", border: "border-l-4 border-l-rose-500 bg-rose-950/30" },
+                manual_log:      { icon: "fa-pen-clip text-amber-300",                 border: "border-l-4 border-l-amber-400" },
+                valorant_match:  { icon: "fa-crosshairs text-rose-400",                border: "border-l-4 border-l-rose-400" },
+                voice_activity:  { icon: "fa-microphone-lines text-purple-400",        border: "border-l-4 border-l-purple-500" },
+                login:           { icon: "fa-right-to-bracket text-emerald-400",       border: "border-l-4 border-l-emerald-500" },
+                logout:          { icon: "fa-power-off text-rose-400",                 border: "border-l-4 border-l-rose-500" },
+                platform_change: { icon: "fa-mobile-screen-button text-sky-400",       border: "border-l-4 border-l-sky-500" },
+                activity_change: { icon: "fa-gamepad text-amber-400",                  border: "border-l-4 border-l-amber-500" },
+                status_change:   { icon: "fa-arrows-rotate text-indigo-400",           border: "border-l-4 border-l-indigo-500" }
             };
 
             container.innerHTML = logsList.map(l => {
@@ -715,7 +1012,7 @@
                                     <span class="text-xs font-bold text-white truncate">${l.global_name || l.username}</span>
                                     <div class="flex items-center gap-1.5 text-[11px]">${activePlatIcons.join("")}</div>
                                 </div>
-                                <span class="text-[11px] text-slate-400 mono flex-shrink-0">${formatTime(l.timestamp)}</span>
+                                <span class="text-[11px] text-slate-400 mono flex-shrink-0">${formatDateTime(l.timestamp)}</span>
                             </div>
                             <p class="text-xs text-slate-300 mt-1 leading-relaxed">${l.summary}</p>
                         </div>
@@ -944,6 +1241,7 @@
             document.getElementById("trackAllFriendsCheckbox").checked = !!data.settings?.track_all_friends;
             document.getElementById("webhookInput").value = data.settings?.webhook_url || "";
             document.getElementById("panelPasswordInput").value = data.settings?.has_password ? "***keep***" : "";
+            document.getElementById("henrikApiKeyInput").value = data.settings?.henrik_api_key || "";
             const cdVal = data.settings?.activity_cooldown !== undefined ? String(data.settings.activity_cooldown) : "180";
             document.getElementById("activityCooldownSelect").value = cdVal;
         }
@@ -957,15 +1255,287 @@
             const track_all_friends = document.getElementById("trackAllFriendsCheckbox").checked;
             const webhook_url = document.getElementById("webhookInput").value.trim();
             const panel_password = document.getElementById("panelPasswordInput").value;
+            const henrik_api_key = document.getElementById("henrikApiKeyInput").value.trim();
             const activity_cooldown = parseInt(document.getElementById("activityCooldownSelect").value || "180", 10);
 
             await fetch("/api/config", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ token, is_bot, track_all_friends, webhook_url, panel_password, activity_cooldown })
+                body: JSON.stringify({ token, is_bot, track_all_friends, webhook_url, panel_password, activity_cooldown, henrik_api_key })
             });
             document.getElementById("tokenInput").value = "";
             closeSettingsModal();
+        }
+
+        // Tab Switching Logic
+        function switchTab(tabName) {
+            const tabs = {
+                radar:    { content: "tabContentRadar",    btn: "tabBtnRadar" },
+                timeline: { content: "tabContentTimeline", btn: "tabBtnTimeline" },
+                valorant: { content: "tabContentValorant", btn: "tabBtnValorant" }
+            };
+            Object.entries(tabs).forEach(([k, v]) => {
+                const cEl = document.getElementById(v.content);
+                const bEl = document.getElementById(v.btn);
+                if (k === tabName) {
+                    cEl.classList.remove("hidden");
+                    bEl.className = "px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition bg-indigo-600 text-white shadow-lg shadow-indigo-600/25";
+                } else {
+                    cEl.classList.add("hidden");
+                    bEl.className = "px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition glass text-slate-300 hover:text-white";
+                }
+            });
+
+            if (tabName === "timeline") loadDetailedTimeline();
+            if (tabName === "valorant") {
+                renderLinkedValorantUsers();
+                loadValorantMatches();
+            }
+        }
+
+        // Detailed Timeline & Sequential Spotify/Activity View
+        async function loadDetailedTimeline() {
+            const uid = document.getElementById("tlUserFilter").value;
+            const dt = document.getElementById("tlDateFilter").value;
+            const params = new URLSearchParams();
+            if (uid) params.set("user_id", uid);
+            if (dt) params.set("date_str", dt);
+
+            const res = await fetch(`/api/timeline?${params.toString()}`);
+            const data = await res.json();
+
+            // 1. Group logs by calendar day
+            const groupedContainer = document.getElementById("timelineGroupedContainer");
+            const logs = data.logs || [];
+            if (logs.length === 0) {
+                groupedContainer.innerHTML = `<div class="text-center py-10 text-xs text-slate-500">Seçilen kriterlere uygun kayıt bulunamadı.</div>`;
+            } else {
+                const groups = {};
+                logs.forEach(l => {
+                    const dayKey = (l.timestamp || "").slice(0, 10) || "Bilinmeyen";
+                    if (!groups[dayKey]) groups[dayKey] = [];
+                    groups[dayKey].push(l);
+                });
+
+                groupedContainer.innerHTML = Object.entries(groups).map(([dayKey, dayLogs]) => {
+                    const dayTitle = formatFullDayLabel(dayLogs[0]?.timestamp || dayKey);
+                    const itemsHtml = dayLogs.map(l => {
+                        const isInvis = l.event_type === "invis_detected";
+                        const dotCls = isInvis ? "bg-rose-500 ring-4 ring-rose-500/20" : "bg-indigo-500";
+                        return `
+                            <div class="relative pl-6 pb-3 border-l border-white/10 last:pb-0">
+                                <span class="w-2.5 h-2.5 rounded-full ${dotCls} absolute -left-[5.5px] top-1.5"></span>
+                                <div class="bg-slate-900/80 border ${isInvis ? 'border-rose-500/40 bg-rose-950/20' : 'border-white/5'} rounded-xl p-3">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-xs font-bold text-white">${l.global_name || l.username}</span>
+                                        <span class="text-[11px] font-semibold text-indigo-300 mono">${formatTime(l.timestamp)}</span>
+                                    </div>
+                                    <p class="text-xs text-slate-300 mt-1">${l.summary}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join("");
+
+                    return `
+                        <div class="space-y-3">
+                            <div class="sticky top-0 z-10 bg-slate-900/95 border border-indigo-500/30 px-3.5 py-2 rounded-xl flex items-center justify-between">
+                                <span class="text-xs font-bold text-indigo-300"><i class="fa-regular fa-calendar mr-1.5"></i>${dayTitle}</span>
+                                <span class="text-[11px] text-slate-400">${dayLogs.length} etkinlik</span>
+                            </div>
+                            <div class="pl-2 space-y-1">${itemsHtml}</div>
+                        </div>
+                    `;
+                }).join("");
+            }
+
+            // 2. Render Spotify Sequential History
+            const spContainer = document.getElementById("timelineSpotifyContainer");
+            const songs = data.spotify_history || [];
+            spContainer.innerHTML = songs.length ? songs.map((s, idx) => `
+                <div class="bg-slate-900/85 border border-white/5 rounded-xl p-2.5 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2.5 min-w-0">
+                        <span class="w-6 h-6 rounded-lg bg-emerald-500/15 text-emerald-400 text-[11px] font-bold flex items-center justify-center flex-shrink-0">#${songs.length - idx}</span>
+                        <div class="min-w-0">
+                            <p class="text-xs font-bold text-white truncate">${s.song}</p>
+                            <p class="text-[11px] text-slate-400 truncate">${s.artist} • <span class="text-emerald-300">${s.username}</span></p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] text-slate-400 mono flex-shrink-0">${formatDateTime(s.timestamp)}</span>
+                </div>
+            `).join("") : `<div class="text-center py-6 text-xs text-slate-500">Henüz Spotify dinleme geçmişi kaydedilmedi.</div>`;
+
+            // 3. Render Activity Sessions
+            const sessContainer = document.getElementById("timelineSessionsContainer");
+            const actSess = data.activity_sessions || [];
+            sessContainer.innerHTML = actSess.length ? actSess.map(a => `
+                <div class="bg-slate-900/85 border border-white/5 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-1.5">
+                            <span class="text-xs font-bold text-white truncate">${a.activity_name}</span>
+                            <span class="text-[10px] text-amber-300">(${a.global_name || a.username})</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 truncate">${a.details || ''} ${a.state ? '• ' + a.state : ''}</p>
+                        <p class="text-[10px] text-slate-500 mono mt-0.5">${formatDateTime(a.started_at)} ➔ ${a.ended_at ? formatTime(a.ended_at) : 'Açık'}</p>
+                    </div>
+                    <span class="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[11px] font-semibold mono flex-shrink-0">
+                        ${formatDuration(a.duration_seconds)}
+                    </span>
+                </div>
+            `).join("") : `<div class="text-center py-6 text-xs text-slate-500">Henüz oyun/aktivite oturumu yok.</div>`;
+        }
+
+        // Manual Log Modal Functions
+        function openManualLogModal() {
+            document.getElementById("manualLogModal").classList.remove("hidden");
+        }
+        function closeManualLogModal() {
+            document.getElementById("manualLogModal").classList.add("hidden");
+        }
+        async function submitManualLog() {
+            const user_id = document.getElementById("manualLogUserSelect").value;
+            const event_type = document.getElementById("manualLogTypeSelect").value;
+            const activity_name = document.getElementById("manualLogActivityInput").value.trim();
+            const custom_timestamp = document.getElementById("manualLogTimeInput").value;
+            const summary = document.getElementById("manualLogSummaryInput").value.trim();
+
+            if (!user_id || !summary) {
+                alert("Lütfen kişi seçin ve açıklama girin.");
+                return;
+            }
+            let isoTs = null;
+            if (custom_timestamp) {
+                isoTs = new Date(custom_timestamp).toISOString();
+            }
+            await fetch("/api/manual-log", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id, event_type, summary, custom_timestamp: isoTs, activity_name })
+            });
+            document.getElementById("manualLogSummaryInput").value = "";
+            document.getElementById("manualLogActivityInput").value = "";
+            closeManualLogModal();
+        }
+
+        // Valorant Tracker & Cross-Reference Functions
+        function renderLinkedValorantUsers() {
+            const container = document.getElementById("linkedValorantUsersList");
+            if (!container) return;
+            const linked = trackedUsers.filter(u => u.valorant_name && u.valorant_tag);
+            if (linked.length === 0) {
+                container.innerHTML = `<p class="text-xs text-slate-500 py-3">Henüz Riot ID bağlanmış bir kişi yok. Yukarıdan seçip ekleyin.</p>`;
+                return;
+            }
+            container.innerHTML = linked.map(u => `
+                <div class="bg-slate-900/80 border border-white/5 rounded-xl p-2.5 flex items-center justify-between">
+                    <div class="flex items-center gap-2.5">
+                        <img src="${u.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-8 h-8 rounded-xl" />
+                        <div>
+                            <p class="text-xs font-bold text-white">${u.global_name || u.username}</p>
+                            <p class="text-[11px] text-rose-400 mono font-semibold">${u.valorant_name}#${u.valorant_tag}</p>
+                        </div>
+                    </div>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 uppercase">${u.valorant_region || 'eu'}</span>
+                </div>
+            `).join("");
+        }
+
+        async function saveValorantAccountLink() {
+            const user_id = document.getElementById("valLinkUserSelect").value;
+            const valorant_name = document.getElementById("valLinkNameInput").value.trim();
+            const valorant_tag = document.getElementById("valLinkTagInput").value.trim();
+            if (!user_id || !valorant_name || !valorant_tag) {
+                alert("Lütfen kişi, Riot oyuncu adı ve #TAG girin.");
+                return;
+            }
+            await fetch("/api/valorant/link", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id, valorant_name, valorant_tag, valorant_region: "eu" })
+            });
+            document.getElementById("valLinkNameInput").value = "";
+            document.getElementById("valLinkTagInput").value = "";
+        }
+
+        async function loadValorantMatches() {
+            const res = await fetch("/api/valorant/matches");
+            const data = await res.json();
+            renderValorantMatches(data.matches || []);
+        }
+
+        function renderValorantMatches(matches) {
+            const container = document.getElementById("valorantMatchesContainer");
+            if (!matches || matches.length === 0) {
+                container.innerHTML = `<div class="text-center py-12 text-xs text-slate-500">Henüz kaydedilmiş Valorant maçı yok. Sağ üstten <b>"Valorant Maçlarını Şimdi Tara"</b> veya <b>"Manuel Valorant Maçı Gir"</b> butonunu kullanabilirsiniz.</div>`;
+                return;
+            }
+            container.innerHTML = matches.map(m => {
+                const isInvis = m.cross_ref_verdict === "invis_caught";
+                const borderCls = isInvis ? "border-rose-500/60 bg-rose-950/25" : (m.cross_ref_verdict === "activity_hidden" ? "border-amber-500/40 bg-slate-900/90" : "border-emerald-500/30 bg-slate-900/90");
+                return `
+                    <div class="border ${borderCls} rounded-2xl p-4 space-y-2.5">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex items-center gap-3">
+                                <img src="${m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-10 h-10 rounded-xl" />
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-sm font-bold text-white">${m.global_name || m.username}</span>
+                                        <span class="text-xs font-semibold text-rose-400 mono">(${m.riot_id})</span>
+                                    </div>
+                                    <p class="text-[11px] text-slate-400 mono">Maç Saati: ${formatDateTime(m.started_at)} ➔ ${formatTime(m.ended_at)} (${formatDuration(m.duration_seconds)})</p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="px-3 py-1 rounded-xl bg-slate-950 border border-white/10 text-xs font-bold text-white">
+                                    ${m.map_name} • ${m.agent_name} • <span class="text-emerald-400">${m.kills}/${m.deaths}/${m.assists}</span> (${m.score_str})
+                                </span>
+                            </div>
+                        </div>
+                        <div class="p-2.5 rounded-xl bg-black/40 border border-white/5 text-xs font-medium ${isInvis ? 'text-rose-300' : 'text-slate-200'}">
+                            ${m.cross_ref_detail}
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function syncValorantMatches(btn) {
+            const statusTxt = document.getElementById("valSyncStatusText");
+            statusTxt.textContent = "Valorant API taranıyor...";
+            const res = await fetch("/api/valorant/sync", { method: "POST" });
+            const data = await res.json();
+            if (!data.ok && data.error) {
+                statusTxt.textContent = data.error;
+            } else {
+                statusTxt.textContent = `Tarama tamamlandı (${data.new_matches || 0} yeni maç bulundu).`;
+                renderValorantMatches(data.matches || []);
+            }
+        }
+
+        function openManualValorantModal() {
+            document.getElementById("manualValorantModal").classList.remove("hidden");
+        }
+        function closeManualValorantModal() {
+            document.getElementById("manualValorantModal").classList.add("hidden");
+        }
+        async function submitManualValorantMatch() {
+            const user_id = document.getElementById("manValUserSelect").value;
+            const map_name = document.getElementById("manValMapInput").value.trim() || "Ascent";
+            const agent_name = document.getElementById("manValAgentInput").value.trim() || "Jett";
+            const kills = parseInt(document.getElementById("manValKills").value || "0", 10);
+            const deaths = parseInt(document.getElementById("manValDeaths").value || "0", 10);
+            const assists = parseInt(document.getElementById("manValAssists").value || "0", 10);
+            const score_str = document.getElementById("manValScore").value.trim() || "13 - 9";
+            const startRaw = document.getElementById("manValStartInput").value;
+            const duration_minutes = parseInt(document.getElementById("manValDurationInput").value || "35", 10);
+
+            const started_at = startRaw ? new Date(startRaw).toISOString() : new Date().toISOString();
+            await fetch("/api/valorant/manual-match", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ user_id, map_name, mode_name: "Rekabetçi", agent_name, kills, deaths, assists, score_str, started_at, duration_minutes })
+            });
+            closeManualValorantModal();
+            loadValorantMatches();
         }
 
         // Target Guilds Modal

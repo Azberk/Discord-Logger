@@ -96,13 +96,60 @@ def init_db():
         )
     """)
 
+    # Valorant matches & cross-reference table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS valorant_matches (
+            match_id TEXT,
+            user_id TEXT,
+            riot_id TEXT,
+            map_name TEXT,
+            mode_name TEXT,
+            agent_name TEXT,
+            kills INTEGER DEFAULT 0,
+            deaths INTEGER DEFAULT 0,
+            assists INTEGER DEFAULT 0,
+            score_str TEXT,
+            started_at TEXT,
+            ended_at TEXT,
+            duration_seconds INTEGER DEFAULT 0,
+            discord_status_during TEXT,
+            cross_ref_verdict TEXT,
+            cross_ref_detail TEXT,
+            created_at TEXT,
+            PRIMARY KEY (match_id, user_id)
+        )
+    """)
+
+    # Safe column migrations for tracked_users
+    existing_cols = {r["name"] for r in cur.execute("PRAGMA table_info(tracked_users)").fetchall()}
+    for col_name, col_def in [
+        ("valorant_name", "TEXT DEFAULT ''"),
+        ("valorant_tag", "TEXT DEFAULT ''"),
+        ("valorant_region", "TEXT DEFAULT 'eu'"),
+        ("last_voice_state", "TEXT DEFAULT ''")
+    ]:
+        if col_name not in existing_cols:
+            cur.execute(f"ALTER TABLE tracked_users ADD COLUMN {col_name} {col_def}")
+
     cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_time ON presence_logs(user_id, timestamp DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON presence_logs(timestamp DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON status_sessions(user_id, started_at DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_act_sessions_user ON activity_sessions(user_id, started_at DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_val_matches_user ON valorant_matches(user_id, started_at DESC)")
 
     conn.commit()
     conn.close()
+
+
+def checkpoint_db():
+    """Flushes all SQLite WAL/journal data into the main stalker.db file before downloading a backup."""
+    try:
+        conn = get_conn()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 
 def get_setting(key: str, default: str = "") -> str:
@@ -533,7 +580,13 @@ def get_total_logs_count() -> int:
     return (row["cnt"] or 0) if row else 0
 
 
-def get_logs(user_id: Optional[str] = None, event_type: Optional[str] = None, limit: int = 500) -> List[Dict[str, Any]]:
+def get_logs(
+    user_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    date_str: Optional[str] = None,
+    search_q: Optional[str] = None,
+    limit: int = 500
+) -> List[Dict[str, Any]]:
     conn = get_conn()
     query = """
         SELECT l.*, u.avatar, u.global_name
@@ -548,8 +601,14 @@ def get_logs(user_id: Optional[str] = None, event_type: Optional[str] = None, li
     if event_type and event_type != "all":
         query += " AND l.event_type = ?"
         params.append(event_type)
+    if date_str:
+        query += " AND l.timestamp LIKE ?"
+        params.append(f"{date_str}%")
+    if search_q:
+        query += " AND (l.summary LIKE ? OR l.username LIKE ? OR l.new_activities LIKE ?)"
+        params.extend([f"%{search_q}%", f"%{search_q}%", f"%{search_q}%"])
 
-    query += " ORDER BY l.id DESC LIMIT ?"
+    query += " ORDER BY l.timestamp DESC, l.id DESC LIMIT ?"
     params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
@@ -565,6 +624,273 @@ def get_logs(user_id: Optional[str] = None, event_type: Optional[str] = None, li
                 d[field] = {} if "platforms" in field else []
         result.append(d)
     return result
+
+
+def insert_special_or_manual_log(
+    user_id: str,
+    event_type: str,
+    summary: str,
+    custom_timestamp: Optional[str] = None,
+    status_override: Optional[str] = None,
+    activity_obj: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Inserts either:
+    - An automatic Invisible Detection log ('invis_detected') when an offline user speaks in voice, types, or chats
+    - A user-created manual observation log ('manual_log')
+    """
+    conn = get_conn()
+    user_row = conn.execute("SELECT * FROM tracked_users WHERE user_id = ?", (user_id,)).fetchone()
+    if not user_row:
+        conn.close()
+        return None
+    u = dict(user_row)
+    ts = custom_timestamp.strip() if (custom_timestamp and custom_timestamp.strip()) else now_iso()
+    display_name = u.get("global_name") or u.get("username") or user_id
+    cur_status = u.get("current_status") or "offline"
+    new_st = status_override or cur_status
+    new_acts = [activity_obj] if activity_obj else []
+
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO presence_logs (
+            user_id, username, event_type,
+            old_status, new_status,
+            old_platforms, new_platforms,
+            old_activities, new_activities,
+            summary, timestamp
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        display_name,
+        event_type,
+        cur_status,
+        new_st,
+        json.dumps({"desktop": u.get("desktop_status", "offline"), "mobile": u.get("mobile_status", "offline"), "web": u.get("web_status", "offline")}),
+        json.dumps({"desktop": u.get("desktop_status", "offline"), "mobile": u.get("mobile_status", "offline"), "web": u.get("web_status", "offline")}),
+        "[]",
+        json.dumps(new_acts, ensure_ascii=False),
+        summary,
+        ts
+    ))
+    log_id = cur.lastrowid
+
+    # Update last_seen_online if invis detected or manual active observation
+    if event_type in ("invis_detected", "manual_log"):
+        conn.execute("UPDATE tracked_users SET last_seen_online = ?, last_updated = ? WHERE user_id = ?", (ts, ts, user_id))
+
+    conn.commit()
+    conn.close()
+    return {
+        "id": log_id,
+        "user_id": user_id,
+        "username": display_name,
+        "global_name": u.get("global_name") or display_name,
+        "avatar": u.get("avatar", ""),
+        "event_type": event_type,
+        "old_status": cur_status,
+        "new_status": new_st,
+        "old_platforms": {},
+        "new_platforms": {},
+        "old_activities": [],
+        "new_activities": new_acts,
+        "summary": summary,
+        "timestamp": ts
+    }
+
+
+def update_user_valorant_account(user_id: str, val_name: str, val_tag: str, val_region: str = "eu"):
+    conn = get_conn()
+    conn.execute("""
+        UPDATE tracked_users
+        SET valorant_name = ?, valorant_tag = ?, valorant_region = ?
+        WHERE user_id = ?
+    """, (val_name.strip(), val_tag.strip().lstrip("#"), (val_region or "eu").strip().lower(), user_id))
+    conn.commit()
+    conn.close()
+
+
+def evaluate_valorant_cross_reference(user_id: str, started_iso: str, ended_iso: str) -> Tuple[str, str, str]:
+    """
+    Cross-references a Valorant match time window [started_iso, ended_iso] against Discord status_sessions
+    and presence_logs to detect if the user was Invisible (Offline) on Discord while playing Valorant!
+    Returns (discord_status_during, cross_ref_verdict, cross_ref_detail)
+    """
+    conn = get_conn()
+    # Check if there was any status_session overlapping [started_iso, ended_iso]
+    overlapping_sessions = conn.execute("""
+        SELECT status, platforms, started_at, ended_at FROM status_sessions
+        WHERE user_id = ?
+          AND started_at <= ?
+          AND (ended_at IS NULL OR ended_at >= ?)
+    """, (user_id, ended_iso, started_iso)).fetchall()
+
+    # Check if Valorant was reported in Discord activities around that time
+    overlapping_val_act = conn.execute("""
+        SELECT id FROM activity_sessions
+        WHERE user_id = ?
+          AND LOWER(activity_name) LIKE '%valorant%'
+          AND started_at <= ?
+          AND (ended_at IS NULL OR ended_at >= ?)
+    """, (user_id, ended_iso, started_iso)).fetchone()
+
+    conn.close()
+
+    if not overlapping_sessions:
+        return (
+            "offline",
+            "invis_caught",
+            "🚨 GÖRÜNMEZ (INVIS) YAKALANDI: Kişi bu maç sırasında Discord'da tamamen Çevrimdışı (Offline/Invisible) görünüyordu!"
+        )
+
+    statuses = list({r["status"] for r in overlapping_sessions if r["status"] != "offline"})
+    status_str = ", ".join(statuses) if statuses else "online"
+
+    if overlapping_val_act:
+        return (
+            status_str,
+            "verified_online",
+            f"✅ Doğrulandı: Discord'da ({status_str.upper()}) açıktı ve Valorant aktivitesi görünüyordu."
+        )
+    else:
+        return (
+            status_str,
+            "activity_hidden",
+            f"⚠️ Aktivite Gizli: Discord'da ({status_str.upper()}) açıktı ama Oyun Aktivitesi (Rich Presence) kapatılmıştı."
+        )
+
+
+def record_valorant_match(
+    match_id: str,
+    user_id: str,
+    riot_id: str,
+    map_name: str,
+    mode_name: str,
+    agent_name: str,
+    kills: int,
+    deaths: int,
+    assists: int,
+    score_str: str,
+    started_at: str,
+    ended_at: str,
+    duration_seconds: int
+) -> Optional[Dict[str, Any]]:
+    conn = get_conn()
+    exists = conn.execute(
+        "SELECT 1 FROM valorant_matches WHERE match_id = ? AND user_id = ?",
+        (match_id, user_id)
+    ).fetchone()
+    conn.close()
+    if exists:
+        return None
+
+    discord_st, verdict, detail = evaluate_valorant_cross_reference(user_id, started_at, ended_at)
+    ts = now_iso()
+
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO valorant_matches (
+            match_id, user_id, riot_id, map_name, mode_name, agent_name,
+            kills, deaths, assists, score_str, started_at, ended_at, duration_seconds,
+            discord_status_during, cross_ref_verdict, cross_ref_detail, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        match_id, user_id, riot_id, map_name, mode_name, agent_name,
+        kills, deaths, assists, score_str, started_at, ended_at, duration_seconds,
+        discord_st, verdict, detail, ts
+    ))
+    conn.commit()
+    row = conn.execute(
+        "SELECT m.*, u.username, u.global_name, u.avatar FROM valorant_matches m LEFT JOIN tracked_users u ON m.user_id = u.user_id WHERE m.match_id = ? AND m.user_id = ?",
+        (match_id, user_id)
+    ).fetchone()
+    conn.close()
+
+    # Also insert into main presence_logs if invisible caught or new match!
+    prefix = "🚨 [INVIS VALORANT YAKALANDI]" if verdict == "invis_caught" else "🎯 [VALORANT MAÇI]"
+    log_summary = f"{prefix} {riot_id} • {map_name} ({mode_name}) • Ajan: {agent_name} • KDA: {kills}/{deaths}/{assists} ({score_str}) — {detail}"
+    insert_special_or_manual_log(
+        user_id=user_id,
+        event_type="invis_detected" if verdict == "invis_caught" else "valorant_match",
+        summary=log_summary,
+        custom_timestamp=started_at,
+        activity_obj={"name": "Valorant (Tracker)", "type": 0, "type_name": "Valorant Maçı", "details": f"{map_name} - {agent_name}", "state": f"KDA: {kills}/{deaths}/{assists}"}
+    )
+
+    return dict(row) if row else None
+
+
+def get_valorant_matches(user_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    q = """
+        SELECT m.*, u.username, u.global_name, u.avatar
+        FROM valorant_matches m
+        LEFT JOIN tracked_users u ON m.user_id = u.user_id
+        WHERE 1=1
+    """
+    params = []
+    if user_id:
+        q += " AND m.user_id = ?"
+        params.append(user_id)
+    q += " ORDER BY m.started_at DESC LIMIT ?"
+    params.append(limit)
+    rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+    conn.close()
+    return rows
+
+
+def get_detailed_timeline(user_id: Optional[str] = None, date_str: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Returns chronological timeline logs, extracted Spotify song history in exact listening order,
+    and game/activity session blocks for the Detailed Timeline tab.
+    """
+    logs = get_logs(user_id=user_id, date_str=date_str, limit=800)
+
+    # Extract Spotify song history in chronological order
+    spotify_history = []
+    seen_song_key = None
+    for l in reversed(logs):  # oldest to newest
+        for act in (l.get("new_activities") or []):
+            if act.get("name") == "Spotify" or act.get("type") == 2:
+                song = act.get("details") or ""
+                artist = act.get("state") or ""
+                if song:
+                    dedup_k = f"{l['user_id']}:{song}:{artist}"
+                    if dedup_k != seen_song_key:
+                        seen_song_key = dedup_k
+                        spotify_history.append({
+                            "user_id": l["user_id"],
+                            "username": l.get("global_name") or l.get("username"),
+                            "avatar": l.get("avatar"),
+                            "song": song,
+                            "artist": artist,
+                            "timestamp": l["timestamp"]
+                        })
+    spotify_history.reverse()  # newest first
+
+    conn = get_conn()
+    sess_q = """
+        SELECT s.*, u.username, u.global_name, u.avatar
+        FROM activity_sessions s
+        LEFT JOIN tracked_users u ON s.user_id = u.user_id
+        WHERE 1=1
+    """
+    s_params = []
+    if user_id:
+        sess_q += " AND s.user_id = ?"
+        s_params.append(user_id)
+    if date_str:
+        sess_q += " AND s.started_at LIKE ?"
+        s_params.append(f"{date_str}%")
+    sess_q += " ORDER BY s.id DESC LIMIT 200"
+    act_sessions = [dict(r) for r in conn.execute(sess_q, s_params).fetchall()]
+    conn.close()
+
+    return {
+        "logs": logs,
+        "spotify_history": spotify_history[:200],
+        "activity_sessions": act_sessions
+    }
 
 
 def get_user_analytics(user_id: str) -> Dict[str, Any]:

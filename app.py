@@ -4,8 +4,11 @@ import hmac
 import json
 import os
 import shutil
+import urllib.parse
+from datetime import datetime, timezone, timedelta
 from contextlib import asynccontextmanager
 from typing import Optional, List
+import aiohttp
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, UploadFile, File, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -108,10 +111,39 @@ class TokenConfigRequest(BaseModel):
     webhook_url: str = ""
     panel_password: str = ""
     activity_cooldown: int = 180
+    henrik_api_key: str = ""
 
 
 class GuildSelectionRequest(BaseModel):
     guild_ids: List[str]
+
+
+class ManualLogRequest(BaseModel):
+    user_id: str
+    event_type: str = "invis_detected"
+    summary: str
+    custom_timestamp: Optional[str] = None
+    activity_name: Optional[str] = ""
+
+
+class ValorantAccountRequest(BaseModel):
+    user_id: str
+    valorant_name: str
+    valorant_tag: str
+    valorant_region: str = "eu"
+
+
+class ManualValorantMatchRequest(BaseModel):
+    user_id: str
+    map_name: str
+    mode_name: str = "Rekabetçi"
+    agent_name: str
+    kills: int = 0
+    deaths: int = 0
+    assists: int = 0
+    score_str: str = "13 - 9"
+    started_at: str
+    duration_minutes: int = 35
 
 
 class AddUserRequest(BaseModel):
@@ -194,7 +226,8 @@ async def api_status():
             "track_all_friends": db.get_setting("track_all_friends", "0") == "1",
             "webhook_url": db.get_setting("webhook_url", ""),
             "has_password": bool(db.get_setting("panel_password", "")),
-            "activity_cooldown": cd_val
+            "activity_cooldown": cd_val,
+            "henrik_api_key": db.get_setting("henrik_api_key", "")
         }
     }
 
@@ -236,6 +269,8 @@ async def api_save_config(req: TokenConfigRequest):
     db.set_setting("track_all_friends", "1" if req.track_all_friends else "0")
     db.set_setting("webhook_url", req.webhook_url.strip())
     db.set_setting("activity_cooldown", str(req.activity_cooldown))
+    if req.henrik_api_key is not None:
+        db.set_setting("henrik_api_key", req.henrik_api_key.strip())
 
     new_cookie_token = None
     if req.panel_password is not None and req.panel_password.strip() != "***keep***":
@@ -243,6 +278,8 @@ async def api_save_config(req: TokenConfigRequest):
         db.set_setting("panel_password", clean_pw)
         if clean_pw:
             new_cookie_token = make_auth_token(clean_pw)
+
+    db.checkpoint_db()
 
     active_token = token or db.get_setting("discord_token", "")
     if active_token:
@@ -270,6 +307,8 @@ async def api_disconnect():
 
 @app.get("/api/backup")
 async def api_backup_db():
+    # Flush all WAL/journal settings including discord_token into stalker.db before download!
+    db.checkpoint_db()
     if os.path.exists(db.DB_PATH):
         return FileResponse(
             path=db.DB_PATH,
@@ -281,13 +320,21 @@ async def api_backup_db():
 
 @app.post("/api/restore")
 async def api_restore_db(file: UploadFile = File(...)):
+    await gateway.stop()
     temp_path = db.DB_PATH + ".upload"
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     shutil.move(temp_path, db.DB_PATH)
     db.init_db()
+
+    # Automatically reconnect to Discord using the token saved inside the restored database!
+    restored_token = db.get_setting("discord_token", "")
+    restored_is_bot = db.get_setting("is_bot", "0") == "1"
+    if restored_token:
+        await gateway.start(restored_token, is_bot=restored_is_bot)
+
     await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
-    return {"ok": True}
+    return {"ok": True, "token_restored": bool(restored_token)}
 
 
 @app.get("/api/users")
@@ -381,11 +428,212 @@ async def api_resync_presences():
 async def api_get_logs(
     user_id: Optional[str] = Query(None),
     event_type: Optional[str] = Query(None),
+    date_str: Optional[str] = Query(None),
+    search_q: Optional[str] = Query(None),
     limit: int = Query(500)
 ):
     return {
-        "logs": db.get_logs(user_id=user_id, event_type=event_type, limit=limit),
+        "logs": db.get_logs(user_id=user_id, event_type=event_type, date_str=date_str, search_q=search_q, limit=limit),
         "total_count": db.get_total_logs_count()
+    }
+
+
+@app.get("/api/timeline")
+async def api_get_timeline(
+    user_id: Optional[str] = Query(None),
+    date_str: Optional[str] = Query(None)
+):
+    return db.get_detailed_timeline(user_id=user_id, date_str=date_str)
+
+
+@app.post("/api/manual-log")
+async def api_add_manual_log(req: ManualLogRequest):
+    act_obj = None
+    if req.activity_name and req.activity_name.strip():
+        act_obj = {
+            "name": req.activity_name.strip(),
+            "type": 0,
+            "type_name": "Manuel Gözlem",
+            "details": req.summary,
+            "state": ""
+        }
+    prefix = "🚨 [MANUEL INVIS KAYDI] " if req.event_type == "invis_detected" else "📝 [MANUEL GÖZLEM] "
+    full_summary = prefix + req.summary.strip()
+    log_entry = db.insert_special_or_manual_log(
+        user_id=req.user_id,
+        event_type=req.event_type,
+        summary=full_summary,
+        custom_timestamp=req.custom_timestamp,
+        activity_obj=act_obj
+    )
+    if not log_entry:
+        return JSONResponse({"ok": False, "error": "Kullanıcı bulunamadı."}, status_code=404)
+
+    await broadcast_to_clients({
+        "type": "presence_log",
+        "log": log_entry,
+        "user": db.get_tracked_user(req.user_id)
+    })
+    return {"ok": True, "log": log_entry}
+
+
+@app.post("/api/valorant/link")
+async def api_link_valorant(req: ValorantAccountRequest):
+    db.update_user_valorant_account(
+        user_id=req.user_id,
+        val_name=req.valorant_name,
+        val_tag=req.valorant_tag,
+        val_region=req.valorant_region
+    )
+    await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
+    return {"ok": True}
+
+
+@app.get("/api/valorant/matches")
+async def api_get_valorant_matches(user_id: Optional[str] = Query(None)):
+    return {"matches": db.get_valorant_matches(user_id=user_id, limit=150)}
+
+
+@app.post("/api/valorant/manual-match")
+async def api_add_manual_valorant_match(req: ManualValorantMatchRequest):
+    u = db.get_tracked_user(req.user_id)
+    if not u:
+        return JSONResponse({"ok": False, "error": "Kullanıcı bulunamadı."}, status_code=404)
+
+    riot_id = f"{u.get('valorant_name') or u.get('global_name') or u.get('username')}#{u.get('valorant_tag') or 'TR1'}"
+    try:
+        dt_start = datetime.fromisoformat(req.started_at)
+        if dt_start.tzinfo is None:
+            dt_start = dt_start.astimezone()
+    except Exception:
+        dt_start = datetime.now().astimezone()
+
+    dur_sec = max(60, req.duration_minutes * 60)
+    dt_end = dt_start + timedelta(seconds=dur_sec)
+    match_id = f"manual_{int(dt_start.timestamp())}_{req.user_id[-4:]}"
+
+    m = db.record_valorant_match(
+        match_id=match_id,
+        user_id=req.user_id,
+        riot_id=riot_id,
+        map_name=req.map_name,
+        mode_name=req.mode_name,
+        agent_name=req.agent_name,
+        kills=req.kills,
+        deaths=req.deaths,
+        assists=req.assists,
+        score_str=req.score_str,
+        started_at=dt_start.isoformat(timespec="seconds"),
+        ended_at=dt_end.isoformat(timespec="seconds"),
+        duration_seconds=dur_sec
+    )
+    await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
+    return {"ok": True, "match": m}
+
+
+@app.post("/api/valorant/sync")
+async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
+    """
+    Polls HenrikDev Valorant API (v3 matches) for tracked users who have a linked Riot ID (Name#Tag),
+    logs any new matches, and automatically cross-references them with Discord presence logs!
+    """
+    users = db.get_tracked_users(only_tracked=True)
+    if user_id:
+        users = [u for u in users if u["user_id"] == user_id]
+
+    linked_users = [u for u in users if u.get("valorant_name") and u.get("valorant_tag")]
+    if not linked_users:
+        return {"ok": False, "error": "Henüz Valorant Riot ID (İsim#Etiket) bağlanmış bir kişi yok.", "new_matches": 0}
+
+    api_key = db.get_setting("henrik_api_key", "").strip()
+    headers = {"User-Agent": "DiscordPresenceRadar/2.0"}
+    if api_key:
+        headers["Authorization"] = api_key
+
+    new_count = 0
+    errors = []
+
+    async with aiohttp.ClientSession() as session:
+        for u in linked_users:
+            v_name = urllib.parse.quote(u["valorant_name"].strip())
+            v_tag = urllib.parse.quote(u["valorant_tag"].strip().lstrip("#"))
+            v_reg = (u.get("valorant_region") or "eu").strip().lower()
+            riot_id_display = f"{u['valorant_name']}#{u['valorant_tag'].lstrip('#')}"
+
+            url = f"https://api.henrikdev.xyz/valorant/v3/matches/{v_reg}/{v_name}/{v_tag}?size=5"
+            try:
+                async with session.get(url, headers=headers, timeout=12) as resp:
+                    if resp.status == 200:
+                        payload = await resp.json()
+                        for m_data in (payload.get("data") or []):
+                            meta = m_data.get("metadata") or {}
+                            match_id = str(meta.get("matchid") or "")
+                            if not match_id:
+                                continue
+
+                            map_name = meta.get("map") or "Bilinmeyen Harita"
+                            mode_name = meta.get("mode") or "Rekabetçi"
+                            game_start_ts = meta.get("game_start") or 0
+                            game_len_ms = meta.get("game_length") or 0
+                            # In v3, game_length can be in seconds or ms depending on endpoint version
+                            dur_sec = int(game_len_ms / 1000) if game_len_ms > 50000 else int(game_len_ms or 1800)
+
+                            dt_start = datetime.fromtimestamp(game_start_ts, tz=timezone.utc).astimezone() if game_start_ts else datetime.now().astimezone()
+                            dt_end = dt_start + timedelta(seconds=dur_sec)
+
+                            # Find player stats inside m_data.players.all_players
+                            all_players = (m_data.get("players") or {}).get("all_players") or []
+                            target_p = None
+                            for p in all_players:
+                                if (
+                                    (p.get("name") or "").lower() == u["valorant_name"].strip().lower()
+                                    and (p.get("tag") or "").lower() == u["valorant_tag"].strip().lstrip("#").lower()
+                                ):
+                                    target_p = p
+                                    break
+                            if not target_p and all_players:
+                                target_p = all_players[0]
+
+                            agent_name = (target_p or {}).get("character") or "Ajan"
+                            stats = (target_p or {}).get("stats") or {}
+                            kills = int(stats.get("kills") or 0)
+                            deaths = int(stats.get("deaths") or 0)
+                            assists = int(stats.get("assists") or 0)
+
+                            team_color = ((target_p or {}).get("team") or "Blue").lower()
+                            teams_obj = m_data.get("teams") or {}
+                            t_info = teams_obj.get(team_color) or {}
+                            rounds_won = t_info.get("rounds_won")
+                            rounds_lost = t_info.get("rounds_lost")
+                            score_str = f"{rounds_won} - {rounds_lost}" if rounds_won is not None else "Tamamlandı"
+
+                            inserted = db.record_valorant_match(
+                                match_id=match_id,
+                                user_id=u["user_id"],
+                                riot_id=riot_id_display,
+                                map_name=map_name,
+                                mode_name=mode_name,
+                                agent_name=agent_name,
+                                kills=kills,
+                                deaths=deaths,
+                                assists=assists,
+                                score_str=score_str,
+                                started_at=dt_start.isoformat(timespec="seconds"),
+                                ended_at=dt_end.isoformat(timespec="seconds"),
+                                duration_seconds=dur_sec
+                            )
+                            if inserted:
+                                new_count += 1
+                    else:
+                        errors.append(f"{riot_id_display}: HTTP {resp.status} (API Anahtarı gerekebilir veya profil gizli)")
+            except Exception as e:
+                errors.append(f"{riot_id_display}: {str(e)}")
+
+    return {
+        "ok": True,
+        "new_matches": new_count,
+        "errors": errors,
+        "matches": db.get_valorant_matches(user_id=user_id, limit=150)
     }
 
 

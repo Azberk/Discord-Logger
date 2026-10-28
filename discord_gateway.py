@@ -619,6 +619,124 @@ class DiscordStalkerGateway:
             if tracked_user and tracked_user.get("is_tracked") == 1:
                 await self._process_presence_payload(d, user_id_override=p_uid)
 
+        elif event_name == "VOICE_STATE_UPDATE":
+            v_uid = str(d.get("user_id") or (d.get("member") or {}).get("user", {}).get("id") or "")
+            if not v_uid:
+                return
+            tracked_user = db.get_tracked_user(v_uid)
+            if not tracked_user or tracked_user.get("is_tracked") != 1:
+                return
+
+            channel_id = d.get("channel_id")
+            guild_id = str(d.get("guild_id") or "")
+            guild_name = (self.guild_details.get(guild_id) or {}).get("name") or f"Sunucu ({guild_id[-4:] if guild_id else 'DM'})"
+            is_Offline = (tracked_user.get("current_status") or "offline") == "offline"
+
+            flags = []
+            if d.get("self_stream"):
+                flags.append("Ekran Yayını Açık")
+            if d.get("self_video"):
+                flags.append("Kamera Açık")
+            if d.get("self_deaf"):
+                flags.append("Kulaklık Kapalı")
+            elif d.get("self_mute"):
+                flags.append("Mikrofon Kapalı")
+            flag_str = f" ({', '.join(flags)})" if flags else ""
+
+            state_key = f"{channel_id}:{flag_str}"
+            if tracked_user.get("last_voice_state") == state_key:
+                return
+
+            conn = db.get_conn()
+            conn.execute("UPDATE tracked_users SET last_voice_state = ? WHERE user_id = ?", (state_key, v_uid))
+            conn.commit()
+            conn.close()
+
+            if channel_id:
+                if is_Offline:
+                    summary = f"🚨 [GÖRÜNMEZ (INVIS) YAKALANDI] Discord'da Çevrimdışı görünmesine rağmen '{guild_name}' sunucusunda sesli kanala (#{channel_id}) katıldı!{flag_str}"
+                    ev_type = "invis_detected"
+                else:
+                    summary = f"🎙️ Sesli kanala katıldı veya durumunu güncelledi: '{guild_name}' (#{channel_id}){flag_str}"
+                    ev_type = "voice_activity"
+            else:
+                summary = f"🎙️ '{guild_name}' sunucusundaki sesli kanaldan ayrıldı."
+                ev_type = "voice_activity"
+
+            log_entry = db.insert_special_or_manual_log(
+                user_id=v_uid,
+                event_type=ev_type,
+                summary=summary,
+                activity_obj={"name": "Sesli Kanal", "type": 0, "type_name": "Sesli Oda", "details": guild_name, "state": flag_str.strip(" ()")} if channel_id else None
+            )
+            if log_entry:
+                await self.broadcast_ui({"type": "presence_log", "log": log_entry, "user": db.get_tracked_user(v_uid)})
+                webhook_url = db.get_setting("webhook_url", "").strip()
+                if webhook_url:
+                    asyncio.create_task(self._send_webhook_notification(webhook_url, log_entry))
+
+        elif event_name == "TYPING_START":
+            t_uid = str(d.get("user_id") or "")
+            if not t_uid:
+                return
+            tracked_user = db.get_tracked_user(t_uid)
+            if not tracked_user or tracked_user.get("is_tracked") != 1:
+                return
+            # Only alert if the user is pretending to be OFFLINE (Invisible)!
+            if (tracked_user.get("current_status") or "offline") == "offline":
+                now_ep = asyncio.get_event_loop().time()
+                last_invis_t = getattr(self, "_invis_typing_cd", {}).get(t_uid, 0)
+                if (now_ep - last_invis_t) < 120:
+                    return
+                if not hasattr(self, "_invis_typing_cd"):
+                    self._invis_typing_cd = {}
+                self._invis_typing_cd[t_uid] = now_ep
+
+                guild_id = str(d.get("guild_id") or "")
+                loc_name = (self.guild_details.get(guild_id) or {}).get("name") if guild_id else "Özel Mesaj (DM)"
+                summary = f"🚨 [GÖRÜNMEZ (INVIS) YAKALANDI] Discord'da Çevrimdışı (Invisible) görünmesine rağmen '{loc_name or 'Sunucu'}' içinde şu an bir mesaj yazıyor (Typing)!"
+                log_entry = db.insert_special_or_manual_log(
+                    user_id=t_uid,
+                    event_type="invis_detected",
+                    summary=summary
+                )
+                if log_entry:
+                    await self.broadcast_ui({"type": "presence_log", "log": log_entry, "user": db.get_tracked_user(t_uid)})
+                    webhook_url = db.get_setting("webhook_url", "").strip()
+                    if webhook_url:
+                        asyncio.create_task(self._send_webhook_notification(webhook_url, log_entry))
+
+        elif event_name == "MESSAGE_CREATE":
+            author = d.get("author") or {}
+            m_uid = str(author.get("id") or "")
+            if not m_uid:
+                return
+            tracked_user = db.get_tracked_user(m_uid)
+            if not tracked_user or tracked_user.get("is_tracked") != 1:
+                return
+            if (tracked_user.get("current_status") or "offline") == "offline":
+                now_ep = asyncio.get_event_loop().time()
+                last_invis_m = getattr(self, "_invis_msg_cd", {}).get(m_uid, 0)
+                if (now_ep - last_invis_m) < 120:
+                    return
+                if not hasattr(self, "_invis_msg_cd"):
+                    self._invis_msg_cd = {}
+                self._invis_msg_cd[m_uid] = now_ep
+
+                guild_id = str(d.get("guild_id") or "")
+                loc_name = (self.guild_details.get(guild_id) or {}).get("name") if guild_id else "Özel Mesaj (DM)"
+                summary = f"🚨 [GÖRÜNMEZ (INVIS) YAKALANDI] Discord'da Çevrimdışı (Invisible) görünmesine rağmen '{loc_name or 'Sunucu'}' kanalına mesaj gönderdi!"
+                log_entry = db.insert_special_or_manual_log(
+                    user_id=m_uid,
+                    event_type="invis_detected",
+                    summary=summary
+                )
+                if log_entry:
+                    await self.broadcast_ui({"type": "presence_log", "log": log_entry, "user": db.get_tracked_user(m_uid)})
+                    webhook_url = db.get_setting("webhook_url", "").strip()
+                    if webhook_url:
+                        asyncio.create_task(self._send_webhook_notification(webhook_url, log_entry))
+
     async def _process_presence_payload(
         self,
         p: Dict[str, Any],
