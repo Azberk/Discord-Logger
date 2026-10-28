@@ -304,36 +304,42 @@
     <section id="tabContentValorant" class="hidden flex-1 px-6 py-4 max-w-[1600px] w-full mx-auto space-y-5">
         <div class="glass rounded-2xl p-5 flex flex-wrap items-center justify-between gap-4">
             <div>
-                <div class="flex items-center gap-2">
-                    <h2 class="text-base font-bold text-white">🎯 Valorant Maç Takibi & Discord Çapraz Referans Dedektifi</h2>
-                    <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold">Invis Avcısı</span>
+                <div class="flex flex-wrap items-center gap-2">
+                    <h2 class="text-base font-bold text-white">🎯 Valorant Maç Takibi, Duo Dedektifi & Discord Çapraz Referans</h2>
+                    <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 font-semibold">Invis & Duo Avcısı</span>
+                    <span class="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                        <i class="fa-solid fa-clock-rotate-left"></i> Otomatik Kontrol: Saatte 1 Kez Aktif
+                    </span>
                 </div>
                 <p class="text-xs text-slate-400 mt-1">
-                    Takip edilen kişilerin Valorant maç saatlerini Discord online kayıtlarıyla otomatik karşılaştırır. Kişi Discord'da <b>Görünmez (Offline)</b> iken maç attıysa anında yakalar!
+                    Her 1 saatte bir bağlı tüm hesapları (Ana + Smurf) otomatik tarar, maçları <b>kronolojik sırayla</b> loglar, <b>Duo / Premade</b> girdiği kişileri kutuda gösterir ve Discord <b>Görünmez (Invis)</b> durumunu çapraz kontrol eder.
                 </p>
             </div>
             <div class="flex items-center gap-2.5 flex-wrap">
                 <button onclick="openManualValorantModal()" class="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-1.5">
                     <i class="fa-solid fa-plus"></i>
-                    <span>Manuel Valorant Maçı Gir & Karşılaştır</span>
+                    <span>Manuel Valorant Maçı Gir</span>
                 </button>
                 <button onclick="syncValorantMatches(this)" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-600/30 flex items-center gap-2 transition">
                     <i class="fa-solid fa-satellite"></i>
-                    <span>Valorant Maçlarını Şimdi Tara (API)</span>
+                    <span>Şimdi API Kontrolü Yap</span>
                 </button>
             </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <!-- Left: Link Riot ID to Tracked Users (4 cols) -->
+            <!-- Left: Link Multiple Riot IDs to Tracked Users (4 cols) -->
             <div class="lg:col-span-4 glass rounded-2xl p-5 space-y-4">
-                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                    <i class="fa-solid fa-link text-rose-400"></i>
-                    <span>Kişilere Valorant Hesabı (Riot ID) Bağla</span>
-                </h3>
+                <div class="flex items-center justify-between">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                        <i class="fa-solid fa-users-viewfinder text-rose-400"></i>
+                        <span>Kişiye Çoklu Valorant Hesabı Bağla</span>
+                    </h3>
+                    <span class="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-semibold">Çoklu Hesap / Smurf Destekli</span>
+                </div>
                 <div class="bg-slate-900/90 border border-white/10 rounded-2xl p-3.5 space-y-3">
                     <div>
-                        <label class="block text-[11px] text-slate-400 mb-1">Discord Kişisi Seç</label>
+                        <label class="block text-[11px] text-slate-400 mb-1">Discord Kişisi Seç (Aynı kişiye birden fazla hesap ekleyebilirsiniz)</label>
                         <select id="valLinkUserSelect" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white"></select>
                     </div>
                     <div class="grid grid-cols-3 gap-2">
@@ -346,27 +352,40 @@
                             <input id="valLinkTagInput" type="text" placeholder="TR1" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white mono" />
                         </div>
                     </div>
-                    <button onclick="saveValorantAccountLink()" class="w-full py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition">
-                        Riot Hesabını Kaydet
+                    <div>
+                        <label class="block text-[11px] text-slate-400 mb-1">Hesap Notu / Etiketi (İsteğe Bağlı)</label>
+                        <input id="valLinkLabelInput" type="text" placeholder="Örn: Ana Hesap, Smurf 1, Yan Hesap..." class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-xs text-white" />
+                    </div>
+                    <button onclick="saveValorantAccountLink()" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-plus-circle"></i>
+                        <span>Riot Hesabını Kişiye Ekle</span>
                     </button>
                 </div>
 
                 <div class="space-y-2">
-                    <p class="text-xs font-semibold text-slate-400">Bağlı Valorant Hesapları</p>
-                    <div id="linkedValorantUsersList" class="space-y-2 max-h-[420px] overflow-y-auto"></div>
+                    <p class="text-xs font-semibold text-slate-400">Bağlı Valorant Hesapları (Kişi Bazlı)</p>
+                    <div id="linkedValorantUsersList" class="space-y-2.5 max-h-[460px] overflow-y-auto pr-1"></div>
                 </div>
             </div>
 
-            <!-- Right: Cross-Referenced Valorant Matches (8 cols) -->
+            <!-- Right: Chronological Cross-Referenced Valorant Matches + Duo Box (8 cols) -->
             <div class="lg:col-span-8 glass rounded-2xl p-5 space-y-4">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                        <i class="fa-solid fa-magnifying-glass-chart text-rose-400"></i>
-                        <span>Kaydedilen Valorant Maçları & Discord Çapraz Referans Sonuçları</span>
-                    </h3>
-                    <span id="valSyncStatusText" class="text-xs text-slate-400"></span>
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                            <i class="fa-solid fa-clock-rotate-left text-rose-400"></i>
+                            <span>Kronolojik Valorant Maç Logları, Duo Kutusu & Discord Çapraz Referans</span>
+                        </h3>
+                        <p id="valLastAutoSyncBadge" class="text-[11px] text-slate-400 mt-0.5">Saatlik otomatik tarama arka planda aktif.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select id="valMatchUserFilter" onchange="loadValorantMatches()" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white focus:outline-none">
+                            <option value="">Tüm Kişiler (Kronolojik)</option>
+                        </select>
+                        <span id="valSyncStatusText" class="text-xs text-amber-300 font-medium"></span>
+                    </div>
                 </div>
-                <div id="valorantMatchesContainer" class="space-y-3 max-h-[620px] overflow-y-auto pr-1">
+                <div id="valorantMatchesContainer" class="space-y-3.5 max-h-[650px] overflow-y-auto pr-1">
                     <!-- Populated via JS -->
                 </div>
             </div>
@@ -728,6 +747,10 @@
                         <input id="manValDurationInput" type="number" value="35" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
                     </div>
                 </div>
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">Duo / Premade Oyuncu (Varsa Riot ID, virgülle ayırın)</label>
+                    <input id="manValDuoInput" type="text" placeholder="Örn: Berkay#TR1, Ahmet#EUW (Solo ise boş bırakın)" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-white/10 text-white" />
+                </div>
             </div>
             <div class="flex justify-end gap-2 pt-2">
                 <button onclick="closeManualValorantModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold">İptal</button>
@@ -843,11 +866,11 @@
                 `<option value="${u.user_id}">${u.global_name || u.username}</option>`
             ).join("");
 
-            ["logUserFilter", "tlUserFilter"].forEach(id => {
+            ["logUserFilter", "tlUserFilter", "valMatchUserFilter"].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) {
                     const cv = el.value;
-                    el.innerHTML = `<option value="">Tüm Kişiler</option>` + userOptionsHtml;
+                    el.innerHTML = `<option value="">Tüm Kişiler (Kronolojik)</option>` + userOptionsHtml;
                     el.value = cv;
                 }
             });
@@ -1416,33 +1439,55 @@
             closeManualLogModal();
         }
 
-        // Valorant Tracker & Cross-Reference Functions
+        // Valorant Tracker, Multi-Account, Duo Box & Cross-Reference Functions
         function renderLinkedValorantUsers() {
             const container = document.getElementById("linkedValorantUsersList");
             if (!container) return;
-            const linked = trackedUsers.filter(u => u.valorant_name && u.valorant_tag);
+            const linked = trackedUsers.filter(u => (u.valorant_accounts && u.valorant_accounts.length > 0) || (u.valorant_name && u.valorant_tag));
             if (linked.length === 0) {
                 container.innerHTML = `<p class="text-xs text-slate-500 py-3">Henüz Riot ID bağlanmış bir kişi yok. Yukarıdan seçip ekleyin.</p>`;
                 return;
             }
-            container.innerHTML = linked.map(u => `
-                <div class="bg-slate-900/80 border border-white/5 rounded-xl p-2.5 flex items-center justify-between">
-                    <div class="flex items-center gap-2.5">
-                        <img src="${u.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-8 h-8 rounded-xl" />
-                        <div>
-                            <p class="text-xs font-bold text-white">${u.global_name || u.username}</p>
-                            <p class="text-[11px] text-rose-400 mono font-semibold">${u.valorant_name}#${u.valorant_tag}</p>
+            container.innerHTML = linked.map(u => {
+                const accs = (u.valorant_accounts && u.valorant_accounts.length > 0)
+                    ? u.valorant_accounts
+                    : [{ id: 0, valorant_name: u.valorant_name, valorant_tag: u.valorant_tag, valorant_region: u.valorant_region || 'eu', label: 'Ana Hesap' }];
+
+                const accsHtml = accs.map(acc => `
+                    <div class="flex items-center justify-between bg-slate-950/80 border border-white/5 rounded-lg px-2.5 py-1.5 mt-1.5">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span class="text-xs text-rose-400 mono font-bold truncate">${acc.valorant_name}#${acc.valorant_tag}</span>
+                            ${acc.label ? `<span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-medium">${acc.label}</span>` : ''}
+                        </div>
+                        <div class="flex items-center gap-1.5 flex-shrink-0">
+                            <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">${acc.valorant_region || 'eu'}</span>
+                            ${acc.id ? `<button onclick="deleteValorantAccount(${acc.id})" title="Bu hesabı kaldır" class="text-slate-500 hover:text-rose-400 px-1 transition"><i class="fa-solid fa-trash-can text-[11px]"></i></button>` : ''}
                         </div>
                     </div>
-                    <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 uppercase">${u.valorant_region || 'eu'}</span>
-                </div>
-            `).join("");
+                `).join("");
+
+                return `
+                    <div class="bg-slate-900/85 border border-white/10 rounded-xl p-3">
+                        <div class="flex items-center justify-between mb-1">
+                            <div class="flex items-center gap-2.5">
+                                <img src="${u.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-8 h-8 rounded-xl object-cover" />
+                                <div>
+                                    <p class="text-xs font-bold text-white">${u.global_name || u.username}</p>
+                                    <p class="text-[10px] text-slate-400">${accs.length} bağlı Valorant hesabı</p>
+                                </div>
+                            </div>
+                        </div>
+                        ${accsHtml}
+                    </div>
+                `;
+            }).join("");
         }
 
         async function saveValorantAccountLink() {
             const user_id = document.getElementById("valLinkUserSelect").value;
             const valorant_name = document.getElementById("valLinkNameInput").value.trim();
             const valorant_tag = document.getElementById("valLinkTagInput").value.trim();
+            const label = (document.getElementById("valLinkLabelInput")?.value || "").trim();
             if (!user_id || !valorant_name || !valorant_tag) {
                 alert("Lütfen kişi, Riot oyuncu adı ve #TAG girin.");
                 return;
@@ -1450,46 +1495,94 @@
             await fetch("/api/valorant/link", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id, valorant_name, valorant_tag, valorant_region: "eu" })
+                body: JSON.stringify({ user_id, valorant_name, valorant_tag, valorant_region: "eu", label })
             });
             document.getElementById("valLinkNameInput").value = "";
             document.getElementById("valLinkTagInput").value = "";
+            if (document.getElementById("valLinkLabelInput")) document.getElementById("valLinkLabelInput").value = "";
+        }
+
+        async function deleteValorantAccount(accountId) {
+            await fetch(`/api/valorant/accounts/${accountId}`, { method: "DELETE" });
         }
 
         async function loadValorantMatches() {
-            const res = await fetch("/api/valorant/matches");
+            const filterUserId = document.getElementById("valMatchUserFilter")?.value || "";
+            const url = filterUserId ? `/api/valorant/matches?user_id=${encodeURIComponent(filterUserId)}` : "/api/valorant/matches";
+            const res = await fetch(url);
             const data = await res.json();
+            const autoBadge = document.getElementById("valLastAutoSyncBadge");
+            if (autoBadge) {
+                autoBadge.textContent = data.last_auto_sync
+                    ? `⏰ Otomatik Tarama: Saatte 1 Kez Aktif • Son Tarama: ${formatDateTime(data.last_auto_sync)}`
+                    : `⏰ Otomatik Tarama: Saatte 1 Kez Arka Planda Aktif`;
+            }
             renderValorantMatches(data.matches || []);
         }
 
         function renderValorantMatches(matches) {
             const container = document.getElementById("valorantMatchesContainer");
             if (!matches || matches.length === 0) {
-                container.innerHTML = `<div class="text-center py-12 text-xs text-slate-500">Henüz kaydedilmiş Valorant maçı yok. Sağ üstten <b>"Valorant Maçlarını Şimdi Tara"</b> veya <b>"Manuel Valorant Maçı Gir"</b> butonunu kullanabilirsiniz.</div>`;
+                container.innerHTML = `<div class="text-center py-12 text-xs text-slate-500">Henüz kaydedilmiş Valorant maçı yok. Sağ üstten <b>"Şimdi API Kontrolü Yap"</b> veya <b>"Manuel Valorant Maçı Gir"</b> butonunu kullanabilirsiniz.</div>`;
                 return;
             }
-            container.innerHTML = matches.map(m => {
+            container.innerHTML = matches.map((m, idx) => {
                 const isInvis = m.cross_ref_verdict === "invis_caught";
                 const borderCls = isInvis ? "border-rose-500/60 bg-rose-950/25" : (m.cross_ref_verdict === "activity_hidden" ? "border-amber-500/40 bg-slate-900/90" : "border-emerald-500/30 bg-slate-900/90");
+                const party = Array.isArray(m.party_members) ? m.party_members : [];
+
+                const duoBoxHtml = party.length > 0
+                    ? `
+                        <div class="p-2.5 rounded-xl bg-indigo-950/60 border border-indigo-500/40 flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex items-center gap-2">
+                                <span class="px-2 py-0.5 rounded-md bg-indigo-500/30 text-indigo-200 text-[11px] font-bold flex items-center gap-1">
+                                    <i class="fa-solid fa-user-group"></i> DUO / PREMADE TESPİT EDİLDİ
+                                </span>
+                                <span class="text-xs text-white font-semibold">Beraber Girdiği Kişiler:</span>
+                            </div>
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                ${party.map(p => `
+                                    <span class="px-2.5 py-1 rounded-lg bg-slate-900 border border-indigo-400/30 text-xs font-bold text-indigo-300 mono">
+                                        👥 ${p.riot_id} <span class="text-slate-400 font-normal">(${p.agent || 'Premade'}${p.kda ? ' • ' + p.kda : ''})</span>
+                                    </span>
+                                `).join("")}
+                            </div>
+                        </div>
+                    `
+                    : `
+                        <div class="px-3 py-1.5 rounded-xl bg-slate-950/60 border border-white/5 flex items-center justify-between text-[11px] text-slate-400">
+                            <span><i class="fa-solid fa-user mr-1.5 text-slate-500"></i><b>Grup / Duo Durumu:</b> Solo Queue (Maça tek başına girdi, partisinde başka kimse yok)</span>
+                            <span class="mono text-[10px] text-slate-500">SOLO</span>
+                        </div>
+                    `;
+
                 return `
                     <div class="border ${borderCls} rounded-2xl p-4 space-y-2.5">
                         <div class="flex flex-wrap items-center justify-between gap-2">
                             <div class="flex items-center gap-3">
-                                <img src="${m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-10 h-10 rounded-xl" />
+                                <img src="${m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="w-10 h-10 rounded-xl object-cover" />
                                 <div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 mono font-bold">#${matches.length - idx}</span>
                                         <span class="text-sm font-bold text-white">${m.global_name || m.username}</span>
-                                        <span class="text-xs font-semibold text-rose-400 mono">(${m.riot_id})</span>
+                                        <span class="text-xs font-semibold px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-300 border border-rose-500/30 mono">🎮 Hesap: ${m.riot_id}</span>
                                     </div>
-                                    <p class="text-[11px] text-slate-400 mono">Maç Saati: ${formatDateTime(m.started_at)} ➔ ${formatTime(m.ended_at)} (${formatDuration(m.duration_seconds)})</p>
+                                    <p class="text-[11px] text-slate-300 mono mt-1">
+                                        <i class="fa-regular fa-calendar-days text-indigo-400 mr-1"></i><b>Kronolojik Maç Zamanı:</b> ${formatDateTime(m.started_at)} ➔ ${formatTime(m.ended_at)} (${formatDuration(m.duration_seconds)})
+                                    </p>
                                 </div>
                             </div>
                             <div class="text-right">
-                                <span class="px-3 py-1 rounded-xl bg-slate-950 border border-white/10 text-xs font-bold text-white">
-                                    ${m.map_name} • ${m.agent_name} • <span class="text-emerald-400">${m.kills}/${m.deaths}/${m.assists}</span> (${m.score_str})
+                                <span class="px-3 py-1.5 rounded-xl bg-slate-950 border border-white/10 text-xs font-bold text-white inline-block">
+                                    ${m.map_name} (${m.mode_name || 'Rekabetçi'}) • <span class="text-amber-300">${m.agent_name}</span> • <span class="text-emerald-400">${m.kills}/${m.deaths}/${m.assists}</span> • Skor: ${m.score_str}
                                 </span>
                             </div>
                         </div>
+
+                        <!-- Duo / Premade Box -->
+                        ${duoBoxHtml}
+
+                        <!-- Discord Cross-Reference Verdict -->
                         <div class="p-2.5 rounded-xl bg-black/40 border border-white/5 text-xs font-medium ${isInvis ? 'text-rose-300' : 'text-slate-200'}">
                             ${m.cross_ref_detail}
                         </div>
@@ -1501,13 +1594,20 @@
         async function syncValorantMatches(btn) {
             const statusTxt = document.getElementById("valSyncStatusText");
             statusTxt.textContent = "Valorant API taranıyor...";
-            const res = await fetch("/api/valorant/sync", { method: "POST" });
+            const filterUserId = document.getElementById("valMatchUserFilter")?.value || "";
+            const url = filterUserId ? `/api/valorant/sync?user_id=${encodeURIComponent(filterUserId)}` : "/api/valorant/sync";
+            const res = await fetch(url, { method: "POST" });
             const data = await res.json();
             if (!data.ok && data.error) {
                 statusTxt.textContent = data.error;
             } else {
-                statusTxt.textContent = `Tarama tamamlandı (${data.new_matches || 0} yeni maç bulundu).`;
+                statusTxt.textContent = `Tarama tamamlandı (${data.new_matches || 0} yeni maç eklendi).`;
+                if (data.last_auto_sync) {
+                    const autoBadge = document.getElementById("valLastAutoSyncBadge");
+                    if (autoBadge) autoBadge.textContent = `⏰ Otomatik Tarama: Saatte 1 Kez Aktif • Son Tarama: ${formatDateTime(data.last_auto_sync)}`;
+                }
                 renderValorantMatches(data.matches || []);
+                fetchLogs();
             }
         }
 
@@ -1527,15 +1627,18 @@
             const score_str = document.getElementById("manValScore").value.trim() || "13 - 9";
             const startRaw = document.getElementById("manValStartInput").value;
             const duration_minutes = parseInt(document.getElementById("manValDurationInput").value || "35", 10);
+            const duo_info = (document.getElementById("manValDuoInput")?.value || "").trim();
 
             const started_at = startRaw ? new Date(startRaw).toISOString() : new Date().toISOString();
             await fetch("/api/valorant/manual-match", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id, map_name, mode_name: "Rekabetçi", agent_name, kills, deaths, assists, score_str, started_at, duration_minutes })
+                body: JSON.stringify({ user_id, map_name, mode_name: "Rekabetçi", agent_name, kills, deaths, assists, score_str, started_at, duration_minutes, duo_info })
             });
+            if (document.getElementById("manValDuoInput")) document.getElementById("manValDuoInput").value = "";
             closeManualValorantModal();
             loadValorantMatches();
+            fetchLogs();
         }
 
         // Target Guilds Modal

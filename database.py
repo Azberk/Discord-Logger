@@ -109,6 +109,7 @@ def init_db():
             deaths INTEGER DEFAULT 0,
             assists INTEGER DEFAULT 0,
             score_str TEXT,
+            party_members TEXT DEFAULT '[]',
             started_at TEXT,
             ended_at TEXT,
             duration_seconds INTEGER DEFAULT 0,
@@ -116,11 +117,25 @@ def init_db():
             cross_ref_verdict TEXT,
             cross_ref_detail TEXT,
             created_at TEXT,
-            PRIMARY KEY (match_id, user_id)
+            PRIMARY KEY (match_id, user_id, riot_id)
         )
     """)
 
-    # Safe column migrations for tracked_users
+    # Multi-account Valorant Riot IDs table (allows linking multiple accounts / smurfs per Discord user)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS valorant_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT,
+            valorant_name TEXT,
+            valorant_tag TEXT,
+            valorant_region TEXT DEFAULT 'eu',
+            label TEXT DEFAULT '',
+            added_at TEXT,
+            UNIQUE(user_id, valorant_name, valorant_tag)
+        )
+    """)
+
+    # Safe column migrations for tracked_users and valorant_matches
     existing_cols = {r["name"] for r in cur.execute("PRAGMA table_info(tracked_users)").fetchall()}
     for col_name, col_def in [
         ("valorant_name", "TEXT DEFAULT ''"),
@@ -130,6 +145,20 @@ def init_db():
     ]:
         if col_name not in existing_cols:
             cur.execute(f"ALTER TABLE tracked_users ADD COLUMN {col_name} {col_def}")
+
+    val_match_cols = {r["name"] for r in cur.execute("PRAGMA table_info(valorant_matches)").fetchall()}
+    if "party_members" not in val_match_cols:
+        cur.execute("ALTER TABLE valorant_matches ADD COLUMN party_members TEXT DEFAULT '[]'")
+
+    # Migrate any single valorant_name/valorant_tag from tracked_users into valorant_accounts
+    legacy_rows = cur.execute(
+        "SELECT user_id, valorant_name, valorant_tag, valorant_region FROM tracked_users WHERE valorant_name IS NOT NULL AND valorant_name != '' AND valorant_tag IS NOT NULL AND valorant_tag != ''"
+    ).fetchall()
+    for lr in legacy_rows:
+        cur.execute("""
+            INSERT OR IGNORE INTO valorant_accounts (user_id, valorant_name, valorant_tag, valorant_region, label, added_at)
+            VALUES (?, ?, ?, ?, 'Ana Hesap', ?)
+        """, (lr["user_id"], lr["valorant_name"], lr["valorant_tag"], lr["valorant_region"] or "eu", datetime.now().astimezone().isoformat(timespec="seconds")))
 
     cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_user_time ON presence_logs(user_id, timestamp DESC)")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON presence_logs(timestamp DESC)")
@@ -232,7 +261,15 @@ def get_tracked_users(only_tracked: bool = True) -> List[Dict[str, Any]]:
         rows = conn.execute("SELECT * FROM tracked_users WHERE is_tracked = 1 ORDER BY CASE WHEN current_status != 'offline' THEN 0 ELSE 1 END, last_updated DESC").fetchall()
     else:
         rows = conn.execute("SELECT * FROM tracked_users ORDER BY CASE WHEN current_status != 'offline' THEN 0 ELSE 1 END, last_updated DESC").fetchall()
+
+    val_rows = conn.execute("SELECT * FROM valorant_accounts ORDER BY id ASC").fetchall()
     conn.close()
+
+    val_map: Dict[str, List[Dict[str, Any]]] = {}
+    for vr in val_rows:
+        vd = dict(vr)
+        val_map.setdefault(vd["user_id"], []).append(vd)
+
     result = []
     for r in rows:
         d = dict(r)
@@ -240,6 +277,7 @@ def get_tracked_users(only_tracked: bool = True) -> List[Dict[str, Any]]:
             d["current_activities"] = json.loads(d["current_activities"] or "[]")
         except Exception:
             d["current_activities"] = []
+        d["valorant_accounts"] = val_map.get(d["user_id"], [])
         result.append(d)
     return result
 
@@ -699,15 +737,51 @@ def insert_special_or_manual_log(
     }
 
 
-def update_user_valorant_account(user_id: str, val_name: str, val_tag: str, val_region: str = "eu"):
+def add_user_valorant_account(user_id: str, val_name: str, val_tag: str, val_region: str = "eu", label: str = ""):
+    clean_name = val_name.strip()
+    clean_tag = val_tag.strip().lstrip("#")
+    clean_reg = (val_region or "eu").strip().lower()
     conn = get_conn()
+    conn.execute("""
+        INSERT INTO valorant_accounts (user_id, valorant_name, valorant_tag, valorant_region, label, added_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, valorant_name, valorant_tag) DO UPDATE SET
+            valorant_region = excluded.valorant_region,
+            label = excluded.label
+    """, (user_id, clean_name, clean_tag, clean_reg, label.strip(), now_iso()))
+    # Keep legacy columns updated with primary account for backward compatibility
     conn.execute("""
         UPDATE tracked_users
         SET valorant_name = ?, valorant_tag = ?, valorant_region = ?
         WHERE user_id = ?
-    """, (val_name.strip(), val_tag.strip().lstrip("#"), (val_region or "eu").strip().lower(), user_id))
+    """, (clean_name, clean_tag, clean_reg, user_id))
     conn.commit()
     conn.close()
+
+
+def remove_user_valorant_account(account_id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM valorant_accounts WHERE id = ?", (account_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_all_valorant_accounts(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    conn = get_conn()
+    q = """
+        SELECT va.*, u.username, u.global_name, u.avatar
+        FROM valorant_accounts va
+        JOIN tracked_users u ON va.user_id = u.user_id
+        WHERE u.is_tracked = 1
+    """
+    params = []
+    if user_id:
+        q += " AND va.user_id = ?"
+        params.append(user_id)
+    q += " ORDER BY va.id ASC"
+    rows = [dict(r) for r in conn.execute(q, params).fetchall()]
+    conn.close()
+    return rows
 
 
 def evaluate_valorant_cross_reference(user_id: str, started_iso: str, ended_iso: str) -> Tuple[str, str, str]:
@@ -773,12 +847,13 @@ def record_valorant_match(
     score_str: str,
     started_at: str,
     ended_at: str,
-    duration_seconds: int
+    duration_seconds: int,
+    party_members: Optional[List[Dict[str, str]]] = None
 ) -> Optional[Dict[str, Any]]:
     conn = get_conn()
     exists = conn.execute(
-        "SELECT 1 FROM valorant_matches WHERE match_id = ? AND user_id = ?",
-        (match_id, user_id)
+        "SELECT 1 FROM valorant_matches WHERE match_id = ? AND user_id = ? AND riot_id = ?",
+        (match_id, user_id, riot_id)
     ).fetchone()
     conn.close()
     if exists:
@@ -786,41 +861,60 @@ def record_valorant_match(
 
     discord_st, verdict, detail = evaluate_valorant_cross_reference(user_id, started_at, ended_at)
     ts = now_iso()
+    party_list = party_members or []
+    party_json = json.dumps(party_list, ensure_ascii=False)
 
     conn = get_conn()
     conn.execute("""
         INSERT INTO valorant_matches (
             match_id, user_id, riot_id, map_name, mode_name, agent_name,
-            kills, deaths, assists, score_str, started_at, ended_at, duration_seconds,
+            kills, deaths, assists, score_str, party_members, started_at, ended_at, duration_seconds,
             discord_status_during, cross_ref_verdict, cross_ref_detail, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         match_id, user_id, riot_id, map_name, mode_name, agent_name,
-        kills, deaths, assists, score_str, started_at, ended_at, duration_seconds,
+        kills, deaths, assists, score_str, party_json, started_at, ended_at, duration_seconds,
         discord_st, verdict, detail, ts
     ))
     conn.commit()
     row = conn.execute(
-        "SELECT m.*, u.username, u.global_name, u.avatar FROM valorant_matches m LEFT JOIN tracked_users u ON m.user_id = u.user_id WHERE m.match_id = ? AND m.user_id = ?",
-        (match_id, user_id)
+        "SELECT m.*, u.username, u.global_name, u.avatar FROM valorant_matches m LEFT JOIN tracked_users u ON m.user_id = u.user_id WHERE m.match_id = ? AND m.user_id = ? AND m.riot_id = ?",
+        (match_id, user_id, riot_id)
     ).fetchone()
     conn.close()
 
-    # Also insert into main presence_logs if invisible caught or new match!
+    # Format Duo / Premade summary text
+    if party_list:
+        duo_names = ", ".join([f"{pm.get('riot_id')} ({pm.get('agent')})" for pm in party_list])
+        duo_str = f" • 👥 DUO/PREMADE: [{duo_names}]"
+    else:
+        duo_str = " • 👤 Tek (Solo)"
+
+    # Also insert into main presence_logs in chronological order!
     prefix = "🚨 [INVIS VALORANT YAKALANDI]" if verdict == "invis_caught" else "🎯 [VALORANT MAÇI]"
-    log_summary = f"{prefix} {riot_id} • {map_name} ({mode_name}) • Ajan: {agent_name} • KDA: {kills}/{deaths}/{assists} ({score_str}) — {detail}"
+    log_summary = f"{prefix} {riot_id} • {map_name} ({mode_name}) • Ajan: {agent_name} • KDA: {kills}/{deaths}/{assists} ({score_str}){duo_str} — {detail}"
     insert_special_or_manual_log(
         user_id=user_id,
         event_type="invis_detected" if verdict == "invis_caught" else "valorant_match",
         summary=log_summary,
         custom_timestamp=started_at,
-        activity_obj={"name": "Valorant (Tracker)", "type": 0, "type_name": "Valorant Maçı", "details": f"{map_name} - {agent_name}", "state": f"KDA: {kills}/{deaths}/{assists}"}
+        activity_obj={
+            "name": "Valorant (Tracker)",
+            "type": 0,
+            "type_name": "Valorant Maçı",
+            "details": f"{map_name} - {agent_name} ({riot_id})",
+            "state": f"KDA: {kills}/{deaths}/{assists}" + (f" | Duo: {duo_names}" if party_list else " | Solo")
+        }
     )
 
-    return dict(row) if row else None
+    if not row:
+        return None
+    d = dict(row)
+    d["party_members"] = party_list
+    return d
 
 
-def get_valorant_matches(user_id: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+def get_valorant_matches(user_id: Optional[str] = None, limit: int = 150) -> List[Dict[str, Any]]:
     conn = get_conn()
     q = """
         SELECT m.*, u.username, u.global_name, u.avatar
@@ -836,6 +930,11 @@ def get_valorant_matches(user_id: Optional[str] = None, limit: int = 100) -> Lis
     params.append(limit)
     rows = [dict(r) for r in conn.execute(q, params).fetchall()]
     conn.close()
+    for r in rows:
+        try:
+            r["party_members"] = json.loads(r.get("party_members") or "[]")
+        except Exception:
+            r["party_members"] = []
     return rows
 
 

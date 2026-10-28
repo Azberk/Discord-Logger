@@ -60,10 +60,30 @@ async def broadcast_to_clients(payload: dict):
 
 
 gateway = DiscordStalkerGateway(on_event_callback=broadcast_to_clients)
+_valorant_auto_task: Optional[asyncio.Task] = None
+_last_valorant_auto_sync: Optional[str] = None
+
+
+async def _valorant_hourly_loop():
+    """Automatically checks Valorant matches every 60 minutes for all linked Riot accounts."""
+    global _last_valorant_auto_sync
+    await asyncio.sleep(25)  # Initial warmup delay after startup
+    while True:
+        try:
+            accounts = db.get_all_valorant_accounts()
+            if accounts:
+                await perform_valorant_sync()
+                _last_valorant_auto_sync = db.now_iso()
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            pass
+        await asyncio.sleep(3600)  # Run every 1 hour (3600 seconds)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _valorant_auto_task
     db.init_db()
     env_token = os.environ.get("DISCORD_TOKEN", "").strip()
     if env_token and not db.get_setting("discord_token", ""):
@@ -79,7 +99,11 @@ async def lifespan(app: FastAPI):
     is_bot = db.get_setting("is_bot", "0") == "1"
     if saved_token:
         await gateway.start(saved_token, is_bot=is_bot)
+
+    _valorant_auto_task = asyncio.create_task(_valorant_hourly_loop())
     yield
+    if _valorant_auto_task and not _valorant_auto_task.done():
+        _valorant_auto_task.cancel()
     await gateway.stop()
 
 
@@ -131,10 +155,12 @@ class ValorantAccountRequest(BaseModel):
     valorant_name: str
     valorant_tag: str
     valorant_region: str = "eu"
+    label: Optional[str] = ""
 
 
 class ManualValorantMatchRequest(BaseModel):
     user_id: str
+    riot_id: Optional[str] = ""
     map_name: str
     mode_name: str = "Rekabetçi"
     agent_name: str
@@ -144,6 +170,7 @@ class ManualValorantMatchRequest(BaseModel):
     score_str: str = "13 - 9"
     started_at: str
     duration_minutes: int = 35
+    duo_info: Optional[str] = ""
 
 
 class AddUserRequest(BaseModel):
@@ -479,19 +506,31 @@ async def api_add_manual_log(req: ManualLogRequest):
 
 @app.post("/api/valorant/link")
 async def api_link_valorant(req: ValorantAccountRequest):
-    db.update_user_valorant_account(
+    db.add_user_valorant_account(
         user_id=req.user_id,
         val_name=req.valorant_name,
         val_tag=req.valorant_tag,
-        val_region=req.valorant_region
+        val_region=req.valorant_region,
+        label=req.label or ""
     )
+    await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
+    return {"ok": True}
+
+
+@app.delete("/api/valorant/accounts/{account_id}")
+async def api_delete_valorant_account(account_id: int):
+    db.remove_user_valorant_account(account_id)
     await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
     return {"ok": True}
 
 
 @app.get("/api/valorant/matches")
 async def api_get_valorant_matches(user_id: Optional[str] = Query(None)):
-    return {"matches": db.get_valorant_matches(user_id=user_id, limit=150)}
+    return {
+        "matches": db.get_valorant_matches(user_id=user_id, limit=200),
+        "last_auto_sync": _last_valorant_auto_sync,
+        "hourly_auto_sync": True
+    }
 
 
 @app.post("/api/valorant/manual-match")
@@ -500,7 +539,10 @@ async def api_add_manual_valorant_match(req: ManualValorantMatchRequest):
     if not u:
         return JSONResponse({"ok": False, "error": "Kullanıcı bulunamadı."}, status_code=404)
 
-    riot_id = f"{u.get('valorant_name') or u.get('global_name') or u.get('username')}#{u.get('valorant_tag') or 'TR1'}"
+    if req.riot_id and req.riot_id.strip():
+        riot_id = req.riot_id.strip()
+    else:
+        riot_id = f"{u.get('valorant_name') or u.get('global_name') or u.get('username')}#{u.get('valorant_tag') or 'TR1'}"
     try:
         dt_start = datetime.fromisoformat(req.started_at)
         if dt_start.tzinfo is None:
@@ -511,6 +553,13 @@ async def api_add_manual_valorant_match(req: ManualValorantMatchRequest):
     dur_sec = max(60, req.duration_minutes * 60)
     dt_end = dt_start + timedelta(seconds=dur_sec)
     match_id = f"manual_{int(dt_start.timestamp())}_{req.user_id[-4:]}"
+
+    party_members = []
+    if req.duo_info and req.duo_info.strip():
+        for raw_p in req.duo_info.split(","):
+            raw_p = raw_p.strip()
+            if raw_p:
+                party_members.append({"riot_id": raw_p, "agent": "Premade"})
 
     m = db.record_valorant_match(
         match_id=match_id,
@@ -525,25 +574,22 @@ async def api_add_manual_valorant_match(req: ManualValorantMatchRequest):
         score_str=req.score_str,
         started_at=dt_start.isoformat(timespec="seconds"),
         ended_at=dt_end.isoformat(timespec="seconds"),
-        duration_seconds=dur_sec
+        duration_seconds=dur_sec,
+        party_members=party_members
     )
     await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
     return {"ok": True, "match": m}
 
 
-@app.post("/api/valorant/sync")
-async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
+async def perform_valorant_sync(user_id: Optional[str] = None) -> dict:
     """
-    Polls HenrikDev Valorant API (v3 matches) for tracked users who have a linked Riot ID (Name#Tag),
-    logs any new matches, and automatically cross-references them with Discord presence logs!
+    Polls HenrikDev Valorant API (v3 matches) for all linked Riot accounts (supporting multiple accounts per user),
+    detects Premade/Duo teammates via shared party_id, logs matches in chronological order, and cross-references with Discord logs!
     """
-    users = db.get_tracked_users(only_tracked=True)
-    if user_id:
-        users = [u for u in users if u["user_id"] == user_id]
-
-    linked_users = [u for u in users if u.get("valorant_name") and u.get("valorant_tag")]
-    if not linked_users:
-        return {"ok": False, "error": "Henüz Valorant Riot ID (İsim#Etiket) bağlanmış bir kişi yok.", "new_matches": 0}
+    global _last_valorant_auto_sync
+    accounts = db.get_all_valorant_accounts(user_id=user_id)
+    if not accounts:
+        return {"ok": False, "error": "Henüz Valorant Riot ID (İsim#Etiket) bağlanmış bir hesap yok.", "new_matches": 0}
 
     api_key = db.get_setting("henrik_api_key", "").strip()
     headers = {"User-Agent": "DiscordPresenceRadar/2.0"}
@@ -554,18 +600,25 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
     errors = []
 
     async with aiohttp.ClientSession() as session:
-        for u in linked_users:
-            v_name = urllib.parse.quote(u["valorant_name"].strip())
-            v_tag = urllib.parse.quote(u["valorant_tag"].strip().lstrip("#"))
-            v_reg = (u.get("valorant_region") or "eu").strip().lower()
-            riot_id_display = f"{u['valorant_name']}#{u['valorant_tag'].lstrip('#')}"
+        for acc in accounts:
+            raw_name = acc["valorant_name"].strip()
+            raw_tag = acc["valorant_tag"].strip().lstrip("#")
+            v_name = urllib.parse.quote(raw_name)
+            v_tag = urllib.parse.quote(raw_tag)
+            v_reg = (acc.get("valorant_region") or "eu").strip().lower()
+            riot_id_display = f"{raw_name}#{raw_tag}"
+            acc_user_id = acc["user_id"]
 
             url = f"https://api.henrikdev.xyz/valorant/v3/matches/{v_reg}/{v_name}/{v_tag}?size=5"
             try:
-                async with session.get(url, headers=headers, timeout=12) as resp:
+                async with session.get(url, headers=headers, timeout=14) as resp:
                     if resp.status == 200:
                         payload = await resp.json()
-                        for m_data in (payload.get("data") or []):
+                        match_list = list(payload.get("data") or [])
+                        # Sort chronologically from oldest to newest so logs are recorded in chronological order
+                        match_list.sort(key=lambda x: (x.get("metadata") or {}).get("game_start") or 0)
+
+                        for m_data in match_list:
                             meta = m_data.get("metadata") or {}
                             match_id = str(meta.get("matchid") or "")
                             if not match_id:
@@ -575,19 +628,17 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
                             mode_name = meta.get("mode") or "Rekabetçi"
                             game_start_ts = meta.get("game_start") or 0
                             game_len_ms = meta.get("game_length") or 0
-                            # In v3, game_length can be in seconds or ms depending on endpoint version
                             dur_sec = int(game_len_ms / 1000) if game_len_ms > 50000 else int(game_len_ms or 1800)
 
                             dt_start = datetime.fromtimestamp(game_start_ts, tz=timezone.utc).astimezone() if game_start_ts else datetime.now().astimezone()
                             dt_end = dt_start + timedelta(seconds=dur_sec)
 
-                            # Find player stats inside m_data.players.all_players
                             all_players = (m_data.get("players") or {}).get("all_players") or []
                             target_p = None
                             for p in all_players:
                                 if (
-                                    (p.get("name") or "").lower() == u["valorant_name"].strip().lower()
-                                    and (p.get("tag") or "").lower() == u["valorant_tag"].strip().lstrip("#").lower()
+                                    (p.get("name") or "").lower() == raw_name.lower()
+                                    and (p.get("tag") or "").lower() == raw_tag.lower()
                                 ):
                                     target_p = p
                                     break
@@ -600,6 +651,26 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
                             deaths = int(stats.get("deaths") or 0)
                             assists = int(stats.get("assists") or 0)
 
+                            # Detect Duo / Premade teammates who share the exact same party_id
+                            target_party_id = (target_p or {}).get("party_id")
+                            party_members = []
+                            if target_party_id:
+                                for p in all_players:
+                                    if p is target_p:
+                                        continue
+                                    p_name = p.get("name") or ""
+                                    p_tag = p.get("tag") or ""
+                                    if (
+                                        p.get("party_id") == target_party_id
+                                        and not (p_name.lower() == raw_name.lower() and p_tag.lower() == raw_tag.lower())
+                                    ):
+                                        p_stats = p.get("stats") or {}
+                                        party_members.append({
+                                            "riot_id": f"{p_name}#{p_tag}",
+                                            "agent": p.get("character") or "Ajan",
+                                            "kda": f"{p_stats.get('kills', 0)}/{p_stats.get('deaths', 0)}/{p_stats.get('assists', 0)}"
+                                        })
+
                             team_color = ((target_p or {}).get("team") or "Blue").lower()
                             teams_obj = m_data.get("teams") or {}
                             t_info = teams_obj.get(team_color) or {}
@@ -609,7 +680,7 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
 
                             inserted = db.record_valorant_match(
                                 match_id=match_id,
-                                user_id=u["user_id"],
+                                user_id=acc_user_id,
                                 riot_id=riot_id_display,
                                 map_name=map_name,
                                 mode_name=mode_name,
@@ -620,7 +691,8 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
                                 score_str=score_str,
                                 started_at=dt_start.isoformat(timespec="seconds"),
                                 ended_at=dt_end.isoformat(timespec="seconds"),
-                                duration_seconds=dur_sec
+                                duration_seconds=dur_sec,
+                                party_members=party_members
                             )
                             if inserted:
                                 new_count += 1
@@ -629,12 +701,22 @@ async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
             except Exception as e:
                 errors.append(f"{riot_id_display}: {str(e)}")
 
+    _last_valorant_auto_sync = db.now_iso()
+    if new_count > 0:
+        await broadcast_to_clients({"type": "users_updated", "data": db.get_tracked_users(only_tracked=True)})
+
     return {
         "ok": True,
         "new_matches": new_count,
         "errors": errors,
-        "matches": db.get_valorant_matches(user_id=user_id, limit=150)
+        "last_auto_sync": _last_valorant_auto_sync,
+        "matches": db.get_valorant_matches(user_id=user_id, limit=200)
     }
+
+
+@app.post("/api/valorant/sync")
+async def api_sync_valorant_matches(user_id: Optional[str] = Query(None)):
+    return await perform_valorant_sync(user_id=user_id)
 
 
 @app.get("/api/users/{user_id}/analytics")
